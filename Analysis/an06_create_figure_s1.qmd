@@ -1,0 +1,195 @@
+---
+title: an06_create_figure_s1.qmd
+abstract: |
+  The purpose of this notebook is to create Supplementary Figure S1.
+  Figure S1 shows the SAM-melt correlation for ONDJ, October and November.
+  ONDJ allows comparisons with previous work (e.g. Torinesi et al., 2003).
+  The October and November allow a lagged comparison against late autumn.
+  Both the NOAA CPC and Marshall (2003) SAM indices are used.
+  The code is largely the same as that used in an02, panel e.
+  !! Requires the output from dt02.
+---
+
+# Data Prep & Set-Up
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Load RACMO & SAM Data
+```{r}
+# Read in RACMO data - created in dt02
+meltData <- domR::read_list("Data/shelfwide_mean/racmoM_shelfwide_mean_snowmelt-dt02.json")
+
+# NOAA
+noaa <- align_sam_to_summers("noaa") |>
+  domR::sift("Summer in 1980:2018")
+mars <- align_sam_to_summers("marshall") |>
+  domR::sift("Summer in 1980:2018")
+```
+
+# Calculate Correlations =======================================================
+## Prep and preallocate
+```{r}
+# Preallocate to hold all the correlation values
+koral <- list()
+koral$noaa <- vector("list", length = 5) |>
+  `names<-`(c("ONDJ-NDJF", "NDJF-NDJF",  "DJ-DJ",    # panel a
+              "Oct-NDJF", "Nov-NDJF"))
+koral$mars <- koral$noaa
+
+# Preallocate matrices for 'r' estimates and p-values
+rpCubud <- matrix(NA, nrow = length(pToken$shelves), ncol = 2) |>
+  `colnames<-`(c("r", "p")) |>
+  `rownames<-`(pToken$shelves) |>
+  as.data.frame()
+
+# Define SAM periods
+samPeriods <- list(month.abb[c(10, 11, 12, 1)], # ONDJ
+                   month.abb[c(11, 12, 1,  2)], # NDJF
+                   month.abb[c(12, 1)],         # DJ
+                   month.abb[c(10, 10)],        # x2 = allows rowMeans in loop
+                   month.abb[c(11, 11)])        # x2 = allows rowMeans in loop
+
+# Define Melt Periods
+meltPeriods <- list("NDJF", "NDJF", "DJ", "NDJF", "NDJF")
+```
+
+## Calculate the shelf-wide correlations
+```{r}
+for (ii in seq_along(samPeriods)) {
+  # Initialise a new rpCubud for each SAM-melt period
+  koral$noaa[[ii]] <- rpCubud
+  koral$mars[[ii]] <- rpCubud
+  
+  # Retrieve & detrend the necessary SAM data
+  iiNoaa <- noaa[, samPeriods[[ii]]] |> rowMeans() |> linear_detrend()
+  iiMars <- mars[, samPeriods[[ii]]] |> rowMeans() |> linear_detrend()
+
+  iiMeltPeriod <- meltPeriods[[ii]] # requires samPeriods & meltPeriods to align
+  
+  # Loop through shelves and calculate correlation
+  for (jj in pToken$shelves) {
+    # Retrieve & detrend the necessary shelf melt data
+    jjMelt <- meltData$shelfwide_melt[[iiMeltPeriod]][jj] |> unlist() |>
+      linear_detrend()
+    
+    # Correlations
+    # NOAA CPC SAM index
+    ijNoaaKaw <- cor.test(iiNoaa, jjMelt, method = "pearson")
+    koral$noaa[[ii]][jj, "r"] <- ijNoaaKaw$estimate |> round(3) |> unname()
+    koral$noaa[[ii]][jj, "p"] <- ijNoaaKaw$p.value  |> round(3) |> unname()
+    
+    # Marshall 2003 SAM index
+    ijMarsKaw <- cor.test(iiMars, jjMelt, method = "pearson")
+    koral$mars[[ii]][jj, "r"] <- ijMarsKaw$estimate |> round(3) |> unname()
+    koral$mars[[ii]][jj, "p"] <- ijMarsKaw$p.value  |> round(3) |> unname()
+  }
+}
+```
+
+# Plot =========================================================================
+We define a function to plot as both panels are the same except the data.
+Only 3 lines can be plotted at once with this function.
+```{r}
+plot_panel <- function(plotWhich, label) {
+  figuR::pre_plot(xLimits = c(0.5, 27.5),
+                  xAlignMidPoints = TRUE, xAxisSide = 1, 
+                  xLabels = pToken$initials, xLabelEvery = 1,
+                  xLabelKula = kulaR::kulaL(4), xLabelCex = 0.88, 
+                  xLabelOffset = 1.05,
+                  xLabelSrt = 270,
+                  xTickBoth = FALSE, xTickLength = 0.15,
+                    
+                  yLimits = c(0.1, -0.9), yAxisSide = 2, 
+                  yInterval = -0.1, 
+                  yLabelFirst = 2, yLabelEvery = 2,
+                  yName = "Correlation", yNameOffset = 4,
+                  
+                  tagText = label, tagLocation = c(1.2, -0.82), tagCex = 1.5,
+                  
+                  mar = c(2, 3.5, 0.5, 0.25),
+                    
+                  gridKula = kulaR::kulaL(1),
+                    
+                  originLwd = 1.25, originKula = "black")
+
+  # Add vertical lines to delineate the regions --------------------------------
+  figuR::add_axis(1, 
+                  meshlines = length(pToken$initials) + 1,
+                  alignMidPoints = FALSE, 
+                  labelEvery = c(3, 13, 14, 21, 25, 28), 
+                  labelKula = "#00000000", tickLength = 0,
+                  gridKula = "black", gridLwd = 1)
+
+  lines(x = c(6.5, 6.5), c(0, -0.9),          # semi-delineation for DML
+        col = kulaR::kulaL(4))            
+  
+  # Add critical r values (at p = 0.05 & = 0.01 for 37 df) ---------------------
+  abline(h = c(-0.3246, -0.4182),
+         lty = c(2, 3), col = kulaL(7, 9))
+  text(x = c(27.4, 27.4), y = c(-0.4182, -0.3246) * 1.05,
+       labels = c("p  =  0.01",
+                  "p  =  0.05"),
+       cex = 0.9, col = kulaR::kulaL(6), adj = c(1, 0))
+  
+  # Plot the data! -------------------------------------------------------------
+  for (ii in plotWhich) {
+    # Grab the necessary data
+    iiNoaa_r <- koral$noaa[[ii]]$r
+    iiMars_r <- koral$mars[[ii]]$r
+    iiValues <- cbind(iiNoaa_r, iiMars_r)
+
+    # Create the necessary structure for a polygon
+    # The shaded area clearly shows the difference between NOAA & Marshall SAM
+    iiBox     <- c(apply(iiValues, 1, max),            # create y value pairs by
+                   rev(apply(iiValues, 1, min)))       #   identifying min & max
+    xShelves  <- seq_along(pToken$shelves)
+    iiShelves <- c(xShelves, rev(xShelves))
+
+    # Indices for the colours
+    iiKula <- which(plotWhich == ii)
+
+    # Add the data
+    polygon(x = iiShelves, y = iiBox,
+              col = kulaR::kulaQ3(iiKula, opacity = 1), 
+              border = NA, lwd = 2)
+    lines(x = xShelves, y = iiNoaa_r,
+          lwd = 2, col = kulaR::kulaQ3(iiKula, opacity = 6))     # NOAA
+    lines(x = xShelves, y = iiMars_r,
+          lwd = 1, col = kulaR::kulaQ3(iiKula, opacity = 3))     # Marshall
+  }    
+
+  # Add region names to the plot -----------------------------------------------
+  text(x = c(1.5, 7.5, 13, 17, 22.5, 26),
+       y = 0.055, 
+       labels = c("Weddell", "Dronning Maud Land", "Am.",
+                  "Wilkes Land", "Oates-George V", "Ross"),
+       col = kulaR::kulaL(4), cex = 0.8)
+
+  # Add legend for the different SAM indices ----
+  legend("topright", 
+        inset = c(0.004, .01),
+        legend = names(koral$noaa[plotWhich]),
+        horiz = TRUE,
+        bg = "white", 
+        text.width = NA,
+        box.col = kulaR::kulaL(6),
+        cex = 0.88,
+        lwd = 3,
+        col = kulaR::kulaQ3(seq_along(plotWhich)))
+}
+```
+
+# Plot as PDF
+```{r}
+if (!exists("vv")) vv <- 0
+vv <- vv + 1
+
+pdf(paste0(figPath, "/figS1v", sprintf("%02d", vv), "_extraCorrelations.pdf"), 
+    width = 12, height = 8)
+
+par(mfrow = c(2, 1))
+plot_panel(1:3, "a)")
+plot_panel(4:5, "b)")
+```

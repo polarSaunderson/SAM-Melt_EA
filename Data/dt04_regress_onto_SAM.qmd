@@ -1,0 +1,242 @@
+---
+title: dt04_regress_onto_SAM.qmd
+abstract: |
+  The purpose of this notebook is to regress RACMO variables onto the SAM index.
+  It is also possible to regress ERA5 variables onto the SAM index as well.
+  The regressions are run in this notebook (>2-5 minutes) and saved as NetCDFs.
+  They can then be plotted in an03.
+  
+  The NetCDF output has three layers:
+    - regression :      the amount of change in a variable for a unit decrease
+                        in the SAM index;
+    - pValues    :      the statistical significance of the regression;
+    - rSquared   :      the coefficient of determination (i.e. how much of the
+                        RACMO/ERA5 variability is explained by the SAM variability).
+                        
+  The following RACMO variables can be used:
+    - snowmelt, albd, t2m;
+    - seb, radi, gbot;
+    - turb, latf, senf;
+    - swsd, swsu, swsn; 
+    - lwsd, lwsu, lwsn;
+    - w10m, u10m, v10m;
+    - smb, precip, sndiv, subl.
+    
+  !! The following variables can only be used if they've been derived in dt01:
+    - turb, radi, w10m, seb, albd, swsn, lwsn
+  
+  The following ERA5 variables can also be used; these are slow! (> 25 min)
+    - MSLP, z700
+    
+  !! It is possible to choose which SAM index to use: either the NOAA CPC index 
+     (set as "noaa"), or the Marshall 2003 index (set as "marshall"). Check (or
+     redefine) the file paths that are expected in "R/align_sam_to_summers.R".
+  
+  It is possible to run the regressions for a single month (e.g. the regression 
+  of the Dec variable onto the Dec SAM), or using a multi-month average (e.g. 
+  the mean (e.g. t2m) or total (e.g. snowmelt) Dec-Jan variable onto the mean 
+  Dec-Jan SAM).
+  
+  !! There is a conversion from Joules to Watts which assumes that all of the 
+     included months have 31 days. The code for this part in the "Convert units" 
+     chunk (line 120). Any changes to account for non-31 day months will need to
+     be hard-coded in.
+  
+params:
+  regressVar: "snowmelt"
+  months:     [12, 1]
+  samIndex:   "noaa"
+  summers:    !expr c(1980:2018)
+---
+
+# Data Prep & Set-Up ===========================================================
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Access SAM index
+```{r}
+samSummer <- align_sam_to_summers(filePath = params$samIndex) |>
+  domR::sift("Summer in vector", params$summers)
+samMean <- samSummer[month.abb[params$months]] |> 
+  rowMeans() |> unlist()        # handles multi-month average
+```
+
+## Access RACMO/ERA5 Data
+```{r}
+if (params$regressVar %in% pToken$varERA5) {
+  ### ERA5 Data
+  era5Path <- "../../Data/ERA5/Antarctic_DJ_variables/"
+  varPath  <- paste0(era5Path, 
+                     "ERA5_", toupper(params$regressVar), 
+                     "_1979-2021_DJ_monthly.nc")
+  varData <- terra::rast(varPath) |>
+    terrapin::subset_by_summer(params$summers) |>
+    terrapin::subset_by_month(params$months, excludeIncomplete = 3)
+  
+  # Assign crs as it is not read correctly
+  terra::crs(varData) <- terra::crs("epsg:4326")
+  
+  # Only part of the southern hemisphere
+  varData <- terra::crop(varData, terra::ext(c(-180, 180, -90, -25)))
+} else if (params$regressVar %in% pToken$varRACMO) {
+  ### Read RACMO data
+  varData <- polarcm::subset_racmoM_by_summer(racmoData = params$regressVar, 
+                                              summers   = params$summers, 
+                                              australSplit = 3) |>
+    polarcm::subset_racmoM_by_month(months = params$months, 
+                                    excludeIncomplete = 3)
+} else {
+  stop("Unknown variable!")
+}
+```
+
+### Prep data
+Run the remaining chunks regardless of using RACMO or ERA5 data. For some 
+variables it makes sense to think of the mean value (i.e. the average of the Dec
+and Jan t2m), whereas others make more sense as totals (i.e. the sum of the Dec
+and Jan snowmelt).
+```{r}
+# Calculate a mean if necessary
+if (params$regressVar %in% pToken$varMeanable) {
+  varAustral <- polarcm::calc_fun_australM(x = varData, 
+                                           FUN = "mean", 
+                                           months = params$months, 
+                                           australSplit = 3)
+} else if (params$regressVar %in% pToken$varSummable) {
+  varAustral <- polarcm::calc_fun_australM(x = varData, 
+                                           FUN = "sum", 
+                                           months = params$months, 
+                                           australSplit = 3)
+} else {
+  stop("Unknown variable!")
+}
+
+varInfo <- list()
+varInfo$units <- terra::units(varAustral)      # we'll add this back later
+```
+
+## Convert units
+```{r}
+# from Joules to Watts
+if (params$regressVar %in% pToken$varEnergy) {
+  varAustral <- varAustral / (60 * 60 * 24 * 31)  # !! assumes Jan / Dec
+  varInfo$units <- gsub("J m-2", "W m-2", varInfo$units)
+}
+
+# from Kelvin to Celsius
+if (params$regressVar %in% pToken$varTemperature) {
+  varAustral <- varAustral - 273.15
+  varInfo$units <- gsub("K", "ºC", varInfo$units)
+}
+
+# from geopotential to geopotential heights
+if (params$regressVar %in% pToken$varGeopotential) {
+  varAustral <- varAustral / 9.8065
+  varInfo$units <- gsub("m**2 s**-2", "m", varInfo$units)
+}
+
+# from Pascals to hectoPascals
+if (params$regressVar %in% pToken$varPressure) {
+  varAustral <- varAustral / 100
+  varInfo$units <- gsub("Pa", "hPa", varInfo$units)
+}
+```
+
+# Perform Regression ===========================================================
+```{r}
+# Verify the number of summers is the same in the variable and the SAM data
+if (length(samMean) != terra::nlyr(varAustral)) stop("Something went wrong!")
+
+# Regression
+start <- domR::start_timer(params$regressVar, "regression")
+regression <- terra::app(x = varAustral,   # Calc the change in this variable
+                         xx = -samMean,    #    per unit *decrease* in the SAM
+                         detrend = TRUE,   # Linearly detrend both time series
+                         fun = apply_lm)   # Local function in the R/ directory
+end <- domR::end_timer(start, params$regressVar, "regression")
+domR::cat_list(params)
+
+# Naming
+rMonths <- domR::get_initials(month.abb[params$months])  # so DJ, not c(12, 1)
+names(regression) <- paste(params$regressVar,
+                           rep(rMonths, 3),
+                           c("regression", "pValues", "rSquared"),
+                           sep = "_")
+```
+
+# Save =========================================================================
+!! Reproject any ERA5 data (EPSG:4326) to RACMO projection?
+Makes it easier to plot in a loop in an03.
+Ignore the warning, GDAL just has issues with the RACMO projection.
+```{r}
+if (params$regressVar %in% pToken$varERA5) {
+  regression <- terra::project(regression, polarcm::use_crs("racmo"))
+}
+```
+
+## Complete file ready for saving
+```{r}
+toSave <- terra::sds(list(c(regression[[1]] |> round(3)),   # regression
+                          c(regression[[2]] |> round(3)),   # pValues
+                          c(regression[[3]] |> round(3))))  # rSquared
+
+# Add units, longname and varname metadata
+if (params$regressVar %in% pToken$varMeanable) {
+  terra::units(toSave)[1] <- paste(varInfo$units[1], "per unit SAM-")
+} else if (params$regressVar %in% pToken$varSummable) {
+  terra::units(toSave)[1] <- paste(varInfo$units[1],  "per unit SAM-")
+}
+terra::units(toSave)[2:3] <- c("p-value", "r2")
+terra::varnames(toSave) <- c("regression", "pValue", "rSquared")
+terra::longnames(toSave) <- c(paste("Regression of", params$regressVar,
+                                    "onto the", params$samIndex, "SAM index.",
+                                    "See units."),
+                             "Statistical Significance",
+                             "Coefficient of Determination")
+blurb <- paste("Regression of", params$regressVar, "onto the", params$samIndex, 
+               "SAM index, using", rMonths, "data (", min(params$summers), "-",
+               max(params$summers), "). Variables are taken from RACMO2.3p3",
+               "(van Dalum et al., 2022) or ERA5 (Hersbach et al., 2020), at", 
+               "monthly resolution. For temperatures, albedo, wind, and",
+               "pressures, the regression is based on the mean of the monthly",
+               "values each summer (e.g. average of the Dec and Jan t2m); for",
+               "the other variables (i.e. masses, fluxes), the regression is ",
+               "based on the sum of the monthly values each summer (e.g. total",
+               "of the Dec and Jan snowmelt). The SAM data is the mean of the",
+               "monthly values each summer (e.g. average of the Dec and Jan",
+               "SAM value).")
+```
+
+## Save as a NetCDF
+```{r}
+# Name set-up
+dirName <- domR::cat_path("Data/samRegressions", 
+                          paste(params$samIndex, "SAM", rMonths, sep = "_"),
+                          paste0("regress", 
+                                 paste(range(params$summers), collapse = "_")))
+
+# Create dir if necessary
+if (!dir.exists(dirName)) dir.create(dirName, recursive = TRUE)
+
+fileName <- dirName |>
+  paste0("regress") |>
+  paste(params$regressVar, params$samIndex, rMonths, sep = "_") |>
+  paste0("-dt04.nc")
+
+terra::writeCDF(toSave,
+                filename = fileName, overwrite = TRUE,
+                atts = domR::get_metadata(format = "NetCDF",
+                                          blurb = blurb))  
+domR::print_on_saving(fileName)
+```
+
+# Check output
+```{r}
+tt <- terra::rast(fileName)
+terra::plot(tt)
+nc <- RNetCDF::open.nc(fileName)
+RNetCDF::print.nc(nc)
+RNetCDF::close.nc(nc)
+```

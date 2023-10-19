@@ -1,0 +1,256 @@
+---
+title: "an01_create_figure_1.qmd"
+abstract: |
+  The purpose of this notebook is to create Figure 1 in the GRL manuscript.
+  Figure 1 shows a map of the median RACMO melt in Antarctica (1980--2018).
+  The figure is based on monthly RACMO2.3p3 modelled melt fluxes (van Dalum et 
+  al. 2021), available on Zenodo: https://doi.org/10.5281/zenodo.5512076.
+  
+  The correlation (on a pixel-by-pixel basis) with satellite melt days are also
+  shown on the figure, using the AMSR melt dataset of Picard (2022). 
+  The correlation is performed over the contemporary periods (2003--2018).
+  
+  !! To calculate & plot the correlations, it is necessary to have first run 
+  dt03, which prepares the AMSR data.
+---
+
+# Data Prep & Set-Up ===========================================================
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Access RACMO Melt Data
+```{r}
+# Get the RACMO data for the plot
+racmoMelt <- polarcm::subset_racmoM_by_summer(racmoData = "snowmelt",  
+                                              summers   = c(1980:2018), 
+                                              australSplit = 3)
+
+# We will plot the total summer melt fluxes
+racmoSum <- polarcm::calc_fun_australM(x = racmoMelt, 
+                                       months = c(11, 12, 1, 2),
+                                       FUN    = "sum")
+```
+
+## Calculate Median Melt
+```{r}
+# We plot the median
+racmoMedian <- terra::median(racmoSum, na.rm = TRUE)
+
+# Use the sum to identify non-melt regions to blank out
+racmoTotal <- sum(racmoSum, na.rm = TRUE)
+racmoMedian[racmoTotal == 0] <- NA     
+
+# Prep for the plot
+# Only a few pixels (mainly AP) are over 270; cap to stop colour bar blowing out
+racmoMedian[racmoMedian > 270] <- 275
+```
+
+# Correlate AMSR Melt Days & RACMO Melt Fluxes =================================
+## Prep RACMO Data
+```{r}
+# Contemporary AMSR-RACMO dates
+# AMSR data is available for 2003:2011 & 2013 on; stop at 2018 to match RACMO
+cSummers <- c(2003:2011, 2013:2018)
+racmoAmsr <- polarcm::subset_racmoM_by_summer(racmoData = racmoSum,
+                                              summers   = cSummers,
+                                              australSplit = 3)
+```
+
+## Access AMSR Melt Data
+```{r}
+# !! The data here must have already been created in dt03
+amsrDir <- "Data/amsr_melt_duration/"
+
+# Read in the monthly AMSR data created in dt03
+novAMSR <- terra::rast(paste0(amsrDir, "amsr_Nov_melt_duration-dt03.nc")) |>
+  terrapin::subset_by_summer(cSummers)
+decAMSR <- terra::rast(paste0(amsrDir, "amsr_Dec_melt_duration-dt03.nc")) |>
+  terrapin::subset_by_summer(cSummers)
+janAMSR <- terra::rast(paste0(amsrDir, "amsr_Jan_melt_duration-dt03.nc")) |>
+  terrapin::subset_by_summer(cSummers)
+febAMSR <- terra::rast(paste0(amsrDir, "amsr_Feb_melt_duration-dt03.nc")) |>
+  terrapin::subset_by_summer(cSummers)
+
+# Summer long values
+ndjfAMSR <- novAMSR + decAMSR + janAMSR + febAMSR
+
+# Reproject & Resample AMSR data; allows pixel-by-pixel comparison w/ RACMO
+amsrMelt <- terra::project(x = ndjfAMSR, y = racmoMelt)
+amsrMelt <- terra::resample(x = amsrMelt, y = racmoMelt, method = "bilinear")
+```
+
+## Correlate
+```{r}
+# Create new raster combining both datasets
+# This approach allows terra::app() to correlate the two rasters
+bothMelt <- c(racmoAmsr,          # 1st half is RACMO melt fluxes
+              amsrMelt)           # 2nd hald is AMSR melt days
+
+# Correlation
+start <- domR::start_timer("Correlating AMSR and RACMO")
+koral <- terra::app(x = bothMelt,
+                    detrend = TRUE, 
+                    method  = "pearson",
+                    fun = terrapin::correlate_by_cell) |>
+  `names<-`(c("estimate", "pValue"))
+end <- end_timer(start, "Correlating AMSR and RACMO")
+```
+
+# Prepare for plotting =========================================================
+## Define regions for plotting separator lines
+```{r}
+# Define region lines & points
+xy1 <- rbind(c(-4.25, 12.5), c(-10, 10))      # westernmost Weddell
+xy2 <- rbind(c(-4, 15.5), c(-9, 18.75))       # Weddell / DML boundary
+xy3 <- rbind(c(9.5, 15.75), c(12.5, 19.25))   # easternmost DML 
+xy4 <- rbind(c(13.25, 9.75), c(20, 12))       # westernmost Amery
+xy5 <- rbind(c(13.5, 8.25), c(21.15, 7.75))   # Amery / Wilkes boundary
+xy6 <- rbind(c(18, -11), c(22.5, -13.5))      # Wilkes / Oates-George V boundary
+xy7 <- rbind(c(8.75, -15.25), c(6, -18.5))    # Oates-George V / Ross boundary
+xy8 <- rbind(c(8, -11.75), c(1.75, -12.5))    # easternmost Ross
+
+# Combine
+zz <- rbind(cbind(object = 1, xy1),
+            cbind(object = 2, xy2),
+            cbind(object = 3, xy3),
+            cbind(object = 4, xy4),
+            cbind(object = 5, xy5),
+            cbind(object = 6, xy6),
+            cbind(object = 7, xy7),
+            cbind(object = 8, xy8))
+
+# Name to interpret as coordinates
+colnames(zz)[2:3] <- c("x", "y")
+
+# Create spatial representations to add to the map
+regLines  <- terra::vect(zz, "lines")
+regPoints <- terra::vect(zz, "points")
+```
+
+## Insignificant Correlation Dots
+```{r}
+# Prepare dots to show insignificant correlations
+kawR <- koral$estimate
+kawP <- koral$pValue
+
+dotsR <- terra::as.points(kawR)   # all the correlation estimates
+dotsP <- terra::as.points(kawP)   # all the p-values
+
+# and we'll only plot dots where the correlation is insignificant (p > 0.05)
+insig5  <- dotsR[terra::values(dotsP) > 0.05]  
+```
+
+## Plot here to see so far
+```{r}
+terra::plot(dotsR, cex = 0.2, col = "red")       # significant at p < 0.05
+terra::points(insig5, cex = 0.2, col = "blue")   # insignificant
+terra::lines(regLines, lwd = 2, col = "black")   # regional separators
+```
+
+## Colours for Median melt values
+```{r}
+# Prepare colours for the melt fluxes
+meltKulas <- kulaR::kulaS(count = 18, addLast = "black")
+meltRange <- c(0, 285)
+```
+
+# Plot as a PDF ================================================================
+## Create plotting functions here to tidy up the PDF call
+```{r}
+add_antarctic_lines <- function() {
+  # Coastlines, grounding lines, basins
+  polarcm::draw_antarctica(extent = "", sbcg = "cg",       # coastline & GL
+                           col = kulaL(2, 5), lwd = 0.1)
+  polarcm::draw_antarctica(extent = "", sbcg = "b",        # basin outlines
+                           col = kulaL(3, 2), lwd = 0.1)
+  polarcm::draw_antarctica(extent = pToken$shelves,        # 27 shelf outlines
+                           sbcg = "s",  col = "black", lwd = 0.1) 
+}
+
+add_regional_lines <- function() {
+  # Regional Separators
+  terra::lines(regLines, lty = 5, lwd = 2, col = kulaL(3))
+  terra::points(regPoints, pch = 1, cex = 1.25, lwd = 2, col = kulaL(3))
+}
+
+add_regional_labels <- function() {
+  # Region Labels
+  text("Weddell", 
+       x = -13.25, y = 15,     
+       cex = 1, adj = c(0, 0.5), col = kulaL(7))
+  text("Dronning Maud Land",
+       x = -2, y = 16.5,   
+       cex = 1, adj = c(0, 0.5), col = kulaL(7))
+  text("Amery", 
+       x = 20.5, y = 10,
+       cex = 1, adj = c(0, 0.5), col = kulaL(7))
+  text("Wilkes", 
+       x = 19.5, y = -0.7,
+       cex = 1, adj = c(0, 0.5), col = kulaL(7))
+  text("Land", 
+       x = 19.75, y = -2.4,
+       cex = 1, adj = c(0, 0.5), col = kulaL(7))
+  text("Oates-George V", 
+       x = 10.75, y = -15.25, 
+       cex = 1, adj = c(0, 0.5), col = kulaL(7), 
+       srt = 18)
+  text("Ross", 
+       x = 3, y = -14,    
+       cex = 1, adj = c(0, 0.5), col = kulaL(7))
+}
+
+add_map_elements <- function() {
+  # Scale bar
+  terra::sbar(d = 250, xy = "bottomright", col = kulaL(7),
+              below = "kilometres", ticks = TRUE, cex = 0.9, adj = c(0.5, -1))
+
+  # Colour bar
+  kLabels <- c(seq(0, 255, 15), ">270", "")
+  kulaR::add_kulaBar(kula = meltKulas, range = meltRange,
+                     axisSide = 1,
+                     mar = c(2.25, 1.75, 2.25, 2),
+                     labels = kLabels, labelOffset = 0.65,
+                     labelEvery = 2, labelCex = 0.85, labelKula = kulaL(8),
+                     name = bquote("Median Summer (NDJF) Melt Flux ( kg "~m^-2~")"),
+                     nameOffset = 0.3, nameCex = 1.05,
+                     nameSide = 3)
+}
+```
+
+# Save as PDF
+```{r}
+# Version & PDF Prepping
+if (!exists("vv")) vv <- 0
+vv <- vv + 1
+
+# Open PDF to write to
+fileName <- paste0(figPath, "fig01v", sprintf("%02d", vv),
+                   "_medianMelt_map-an01.pdf")
+pdf(fileName, width = 9, height = 7)
+
+# Arrange panels
+figuR::arrange_panels(list(c(1, 100, 1, 100),
+                           c(1, 50, 85, 100)))
+
+# Plot Data ====================================================================
+# Median RACMO Melt Fluxes
+terra::plot(x = racmoMedian,
+            col = meltKulas, range = meltRange,
+            axes = FALSE, legend = FALSE,
+            mar = c(0.55, 0, 0.55, 0),
+            xlim = c(-26, 26), ylim = c(-19, 21.5))
+
+# Add stipling for insignificant AMSR-RACMO correlations (i.e. p > 0.05)
+terra::points(insig5, pch = 4, col = kulaL(3), cex = 0.01)
+
+# Decoration -------------------------------------------------------------------
+draw_racmo_axes(terra::ext(c(-26.5, 26.5, -19, 21.5)), interval = 10,
+                lineKula = kulaR::kulaL(2), tickKula = kulaR::kulaL(2))
+add_antarctic_lines()
+add_regional_lines()
+add_regional_labels()
+add_map_elements()
+figuR::add_plot_frame()
+```

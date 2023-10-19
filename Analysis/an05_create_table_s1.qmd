@@ -1,0 +1,123 @@
+---
+title: an05_create_table_s1.qmd
+abstract: |
+  The purpose of this notebook is to create the supplementary Table S1.
+  The table presents an overview of the included ice shelves.
+  The ice shelves are defined in dt00.
+  At the end of this notebook, the table is saved as a csv and then slightly
+  "formatted" in Excel.
+  
+  !! The table requires data output created in dt02 and dt04.
+---
+
+# Data Prep & Set-Up
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Table Set-Up
+```{r}
+# Prep
+shelfCount  <- length(pToken$shelves)
+columnNames <- c("Name", "Abbreviation",
+                 "Region", 
+                 "Area", "Pixels",
+                 "Median (NDJF)", "Median (DJ)",
+                 "Mean (NDJF)", "Mean (DJ)",
+                 "DJ %",
+                 "Regression")
+
+# Preallocate
+shelfTable <- matrix(NA, ncol = 11, nrow = shelfCount) |>
+  `colnames<-`(columnNames) |>
+  `row.names<-`(pToken$shelves) |>
+  as.data.frame()
+```
+
+## Calculate Melt Averages
+```{r}
+# Read in monthly melt data (prepared in dt02)
+dt <- domR::read_list("Data/shelfwide_mean/racmoM_shelfwide_mean_snowmelt-dt02.json")
+melt <- dt$shelfwide_melt
+
+# Shelf means
+ndjfMean <- colMeans(melt$NDJF) |> round(1)
+djMean   <- colMeans(melt$DJ) |> round(1)
+
+# Shelf medians
+ndjfMedian <- apply(melt$NDJF, MARGIN = 2, median) |> round(1)
+djMedian   <- apply(melt$DJ, MARGIN = 2, median) |> round(1)
+
+# Melt season concentration
+peakMelt <- ((melt$DJ / melt$NDJF) * 100) |> round(2)
+peakMean <- colMeans(peakMelt, na.rm = TRUE) |> round(1)
+```
+
+## Prepare for regression and area calculations
+```{r}
+# Regression
+mRegression <- terra::rast(paste0("Data/samRegressions/noaa_SAM_DJ/",
+                                  "regress1980_2018/",
+                                  "regress_snowmelt_noaa_DJ-dt04.nc"))
+```
+
+# Populate Table ===============================================================
+## Basic Shelf Information
+```{r}
+## Add shelf names
+shelfTable$Name <- pToken$shelves
+shelfTable$Abbreviation <- pToken$initials
+
+## Add region information
+shelfTable$Region <- c(rep("Weddell",        2),
+                       rep("DML",            10),
+                       rep("Amery",          1),
+                       rep("Wilkes",         7),
+                       rep("Oates-George V", 4),
+                       rep("Ross",           3))
+```
+
+## Add Melt Means & Medians
+```{r}
+# Means
+shelfTable$`Mean (NDJF)` <- ndjfMean[-length(ndjfMean)]       # ignores EA-wide
+shelfTable$`Mean (DJ)`   <- djMean[-length(djMean)]           
+
+# Medians
+shelfTable$`Median (NDJF)` <- ndjfMedian[-length(ndjfMedian)] # ignores EA-wide
+shelfTable$`Median (DJ)`   <- djMedian[-length(djMedian)] 
+
+# Peaks
+shelfTable$`DJ %` <- peakMean[-length(peakMean)]              # ignores EA-wide
+```
+
+# Areas & SAM-Melt Regression
+Here we loop through each shelf to calculate the remaining columns.
+```{r}
+for (ii in pToken$shelves) {
+  # Area
+  iiShelf <- polarcm::get_shelf_outline(extent = ii, rectangularExtent = FALSE)
+  iiExtra <- terra::extract(x = mRegression, y = iiShelf, exact = TRUE)
+  shelfTable[ii, "Area"]   <- (iiExtra$fraction * 27 * 27) |> sum() |> round(1)
+  shelfTable[ii, "Pixels"] <- iiExtra$fraction[iiExtra$fraction > 0.5] |>
+    length()
+  
+  # Mean Regression
+  meanRegress <- polarcm::calc_fun_in_space(x = mRegression$regression,
+                                            FUN = "mean",
+                                            extent = iiShelf, 
+                                            minArea = 0.5)
+  shelfTable[ii, "Regression"] <- round(meanRegress$mean_regression, 1)
+}
+```
+
+# Table S1 =====================================================================
+```{r}
+# Display here
+print(shelfTable)
+
+# Save
+write.csv(shelfTable, file = "Data/Table_S1.csv", row.names = FALSE)
+```
+

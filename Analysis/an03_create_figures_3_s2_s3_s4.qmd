@@ -1,0 +1,424 @@
+---
+title: an03_create_figures_3_s2_s3_s4.qmd
+abstract: |
+  The purpose of this notebook is to create Figure 3 in the GRL manuscript.
+  It can also be used for Supplementary Figures 2, 3, and 4.
+  
+  !! This notebook requires the output from dt04 !! 
+  Run that first; here we just plot the data as a figure.
+  
+  These figures show the RACMO climate variables regressed against the SAM.
+  Regressions show the change in a variable for a unit decrease in the SAM.
+  There are 6 panels in a figure.  
+    
+  In these figures, we can plot:
+    - "reg":    regression of the variable onto the SAM index
+    - "r2":     coefficient of determination (r^2) of the regression
+    - "mean":   mean climatology of the RACMO variables
+    - "stdev":  stdev climatology of the RACMO variables
+    
+  For the supplementary figures, set the params accordingly.
+  (w10m is absolute wind speed at 10m, v10m is southerly, u10m is westerly).
+  
+  In the manuscript, all figures use a startYear of 1980 and an endYear of 2018.
+  
+  For Figure 3:
+    racmoVar:  ["snowmelt", "t2m", "albd", "lwsd", "precip", "senf"]
+    plotType:  ["reg", "reg", "reg", "reg", "reg", "reg"] 
+    figName:   "03"
+      
+  For Figure S2:
+    racmoVar:  ["swsd", "swsn", "lwsu", "lwsn", "seb", "mslp"]
+    plotType:  ["reg", "reg", "reg", "reg", "reg", "reg"]
+    figName:   "S2"
+  Use months: "DJ" and samIndex: "noaa" for both of the above.
+  
+  For Figure S3:
+    racmoVar:  ["snowmelt", "t2m", "w10m", "lwsd", "precip", "senf"]
+    plotType:  ["r2", "r2", "r2", "r2", "r2", "r2"]
+    figName:   "S3"
+  
+  For Figure S4:
+    racmoVar:  ["w10m", "w10m", "u10m", "u10m", "v10m", "v10m"]
+    plotType:  ["mean", "reg", "mean", "reg", "mean", "reg"]
+    figName:   "S4"
+  Use months: "DJ" for both of the above; the samIndex makes no difference.
+  
+params:
+  startYear: [1980, 1980, 1980, 1980, 1980, 1980]
+  endYear:   [2018, 2018, 2018, 2018, 2018, 2018]
+  samIndex:  ["noaa", "noaa", "noaa", "noaa", "noaa", "noaa"]
+  months:    ["DJ", "DJ", "DJ", "DJ", "DJ", "DJ"]
+  racmoVar:  ["snowmelt", "t2m", "albd", "lwsd", "precip", "senf"]
+  plotType:  ["reg", "reg", "reg", "reg", "reg", "reg"] 
+  figName:   "03"
+---
+
+# Data Prep & Set-Up ===========================================================
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Create an ocean mask
+We assume that any pixels with an average SMB of exactly 0 over the full time 
+period are not on the ice sheet or an ice shelf, and therefore mask them out as 
+ocean.
+```{r}
+mask <- polarcm::read_racmoM("smb") |>
+  terra::mean() |> round(3)
+mask[mask == 0] <- NA
+```
+
+## Load in the necessary data
+Make sure that the necessary NetCDFs have already been created in dt04, which is 
+for the regressions, and/or dt05, which is for the climatology.
+```{r}
+# Reformat info for accessing
+varTypeName <- paste(params$racmoVar, params$plotType, sep = "_")
+
+# Preallocate
+panelList <- list()
+
+# Prepare data for each panel
+for (ii in 1:6) {
+  # Data for this panel
+  iiVar   <- params$racmoVar[ii]
+  iiType  <- params$plotType[ii]
+  iiPlot  <- varTypeName[ii]
+  iiSam   <- params$samIndex[ii]
+  iiMonth <- params$months[ii]
+  iiStart <- params$startYear[ii]
+  iiEnd   <- params$endYear[ii]
+  
+  # Data handling depends on whether it is regressions, r2 or climatology
+  if (iiType %in% c("reg", "r2")) {
+    # Regression Data
+    iiFile <- paste0("Data/samRegressions/", 
+                     paste0(iiSam, "_SAM_", iiMonth),
+                     paste0("/regress", iiStart, "_", iiEnd),
+                     paste("/regress", iiVar, iiSam, iiMonth, sep = "_"), 
+                     "-dt04.nc")
+    iiData <- terra::rast(iiFile)
+    
+    # Resample if it is ERA5 data
+    if (iiVar %in% pToken$varERA5) {
+      iiData <- terra::resample(iiData, mask)
+    }
+    
+    # Which layer? Regression or R2?
+    iiPanelData <- switch(iiType,
+                          "reg" = iiData$regression,
+                          "r2"  = iiData$rSquared)
+    
+    # Remove statistically insignificant regressions
+    iiPanelData[iiData$pValue > 0.05] <- NA
+  } else if (iiType %in% c("mean", "stdev", "sd")) {
+    # Climatology Data
+    iiFile <- paste0(paste0("Data/racmo_climatology/racmoM_", iiMonth, "/",
+                           "klima", iiStart, "_", iiEnd, "/",
+                           paste("racmoM", 
+                                 switch(iiType,
+                                        "mean"  = "klimaMean",
+                                        "stdev" = , "sd" = "klimaSD"),
+                                 iiMonth, iiVar, sep = "_")), "-dt05.nc")
+    iiPanelData <- terra::rast(iiFile)
+    
+    # Resample if it is ERA5 data
+    if (iiVar %in% pToken$varERA5) {
+      iiPanelData <- terra::resample(iiPanelData, mask)
+    }
+  }
+  
+  # Remove the ocean / crop
+  # We don't want to crop for the pressure-related variables 
+  if (iiVar %in% c(pToken$varPressure, pToken$varGeopotential)) {
+    iiPanelData <- terra::crop(iiPanelData, c(-26, 26, -23, 21))
+  } else {  # for the other variables, we only want data over the ice
+    iiPanelData[is.na(mask)] <- NA
+  }
+  
+  # Remove non-melting pixels from melt regressions
+  if (iiVar == "snowmelt") iiPanelData[iiPanelData == 0] <- NA
+  
+  # Cap minimum values for precipitation; stops AP pixels overwhelming limits
+  if (iiVar == "precip") iiPanelData[iiPanelData < -60] <- -60
+  
+  # Store
+  panelList[[iiPlot]] <- iiPanelData
+}
+```
+
+# Prepare for plotting =========================================================
+## Define colours
+```{r}
+# Preallocate
+kulaList <- list()
+
+# Prepare colour values for each panel
+for (ii in 1:6) {
+  iiX <- varTypeName[[ii]]
+  
+  if (params$plotType[ii] == "r2") {
+    # if using r2, we want all r2 plots to have the same range
+    iiData <- terra::rast(panelList[which(params$plotType == "r2")])
+  } else {
+    # if regressions or climatology, just use good values for the single plot
+    iiData <- panelList[[iiX]] 
+  }
+
+  # Store 
+  iiKula <- kulaR::get_kulaInfo(iiData)
+  kulaList[[iiX]] <- iiKula
+}
+```
+
+## Annotations and names
+### Units
+```{r}
+# Preallocate
+unitsList <- list()
+
+for (ii in 1:6) {
+  iiVar  <- params$racmoVar[ii]
+  iiName <- varTypeName[ii]
+  iiType <- params$plotType[ii]
+  
+  if (iiType == "r2") {
+    unitsList[[iiName]] <- bquote(R^2)
+  } else if (iiType == "mean") {
+    unitsList[[iiName]] <- prep_racmo_names(racmoVars = iiVar, 
+                                            originalUnits = FALSE, 
+                                            monthlyData = NA, 
+                                            shortName = NULL)
+  } else if (iiType == "reg") {
+    unitsList[[iiName]] <- prep_racmo_names(racmoVars = iiVar,
+                                            originalUnits = FALSE,
+                                            monthlyData = NA,
+                                            shortName = NULL,
+                                            after = "/ SAM-",
+                                            bracket1 = 5, bracket2 = 9)
+  } else {
+    unitsList[[iiName]] <- ""
+  }
+}
+```
+
+### Variable Names
+```{r}
+# Preallocate
+namesList <- list()
+
+for (ii in 1:6) {
+  iiVar  <- params$racmoVar[ii]
+  iiName <- varTypeName[ii]
+
+  namesList[[iiName]] <- prep_racmo_names(racmoVars = iiVar, 
+                                          originalUnits = NULL)
+}
+```
+
+### Annotations
+```{r}
+# Preallocate
+topLeftList  <- list()
+topRightList <- list()
+
+for (ii in 1:6) {
+  iiVar  <- params$racmoVar[ii]
+  iiName <- varTypeName[ii]
+  iiType <- params$plotType[ii]
+
+  if (iiType == "mean") {
+    topLeftList[[iiName]] <- switch(iiVar,
+                                    "u10m" = "\neasterlies",
+                                    "v10m" = "\nnortherlies",
+                                    "")
+    topRightList[[iiName]] <- switch(iiVar,
+                                     "u10m" = "\nwesterlies",
+                                     "v10m" = "\nsoutherlies",
+                                     "")
+  } else if (iiType == "reg") {
+    topLeftList[[iiName]] <- switch(iiVar,
+                                  "snowmelt" = "\ndrier",
+                                  "t2m"      = "\ncooler",
+                                  "albd"     = ,
+                                  "albedo"   = "\ndarker",
+                                  "lwsd"     = "less\nincoming",
+                                  "precip"   = "\nless",
+                                  "senf"     = "less\nincoming",
+                                  "latf"     = "greater\nlosses",
+                                  "turb"     = "\nreduced",
+                                  "swsd"     = "less\nincoming",
+                                  "gbot"     = "greater\nlosses",
+                                  "seb"      = "\nreduced",
+                                  "w10m"     = "\nslower",
+                                  "u10m"     = "faster\neasterlies",  # slower westerlies
+                                  "v10m"     = "slower\nsoutherlies", # faster northerlies
+                                  "lwsn"     = "\nreduced",
+                                  "swsn"     = "\nreduced",
+                                  "lwsu"     = "greater\nlosses",
+                                  "mslp"     = "",
+                                  "z700"     = "")
+    
+    topRightList[[iiName]] <- switch(iiVar,
+                                    "snowmelt" = "\nwetter",
+                                    "t2m"      = "\nwarmer",
+                                    "albd"     = ,
+                                    "albedo"   = "\nbrighter",
+                                    "lwsd"     = "more\nincoming",
+                                    "precip"   = "\ngreater",
+                                    "senf"     = "more\nincoming",
+                                    "latf"     = "reduced\nlosses",
+                                    "turb"     = "\ngreater",
+                                    "swsd"     = "extra\nincoming",
+                                    "gbot"     = "reduced\nlosses",
+                                    "seb"      = "\ngreater",
+                                    "w10m"     = "\nfaster",
+                                    "u10m"     = "slower\neasterlies",  # faster westerlies
+                                    "v10m"     = "faster\nsoutherlies", # slower northerlies 
+                                    "swsn"     = "\ngreater",
+                                    "lwsn"     = "\ngreater",
+                                    "lwsu"     = "reduced\nlosses",
+                                    "mslp"     = "higher\npressure",
+                                    "z700"     = "higher\npressure")
+  } else {
+    topLeftList[[iiName]]  <- ""
+    topRightList[[iiName]] <- ""
+  }
+}
+```
+
+## Prepare layout
+```{r}
+layoutList <- list(c(1, 50, 2, 33),      # 1st row, left,  map
+                   c(1, 30, 27, 33),     # 1st row, left,  colour bar
+                   c(51, 100, 2, 33),    # 1st row, right, map
+                   c(51, 80, 27, 33),    # 1st row, right, colour bar
+                      
+                   c(1, 50, 35, 66),     # 2nd row
+                   c(1, 30, 60, 66),
+                   c(51, 100, 35, 66),
+                   c(51, 80, 60, 66),
+      
+                   c(1, 50, 68, 99),     # 3rd row
+                   c(1, 30, 93, 99),
+                   c(51, 100, 68, 99),
+                   c(51, 80, 93, 99))
+
+panels <- figuR::arrange_panels(layoutList)
+```
+
+## Function to loop through plotting the panels
+```{r}
+# Plot the 6 maps
+plot_panels <- function() {
+  for (ii in 1:6) {
+    # Correct data -------------------------------------------------------------
+    iiX     <- varTypeName[[ii]]
+    iiData  <- panelList[[iiX]]
+    iiKula  <- kulaList[[iiX]]$zKulas
+    iiRange <- kulaList[[iiX]]$zRange
+    iiTicks <- kulaList[[iiX]]$zTicks
+    iiIncrement <- kulaList[[iiX]]$zIncrement
+    iiUnits <- unitsList[[iiX]]
+    iiName  <- namesList[[iiX]]
+    iiLeft  <- topLeftList[[iiX]]
+    iiRight <- topRightList[[iiX]]
+    iiVar   <- params$racmoVar[[ii]]
+    
+    # Plot the map data --------------------------------------------------------
+    terra::plot(iiData,
+                col = iiKula, range = iiRange,
+                mar = c(0, 0.05, 0, 0.05),
+                xlim = c(-26, 26), ylim = c(-23, 21),
+                legend = FALSE, axes = FALSE)        # we'll add our own
+    
+    # Decorate the map ---------------------------------------------------------
+    # Outlines
+    polarcm::draw_antarctica("", "cg", col = kulaL(2, 5), lwd = 0.1) # GL & coast
+    polarcm::draw_antarctica("", "b",  col = kulaL(3, 3), lwd = 0.1) # basins
+    polarcm::draw_antarctica(pToken$shelves, "s",                    # 27 shelves
+                             col = "black", lwd = 0.1)
+    
+    # axes
+    draw_racmo_axes(terra::ext(c(-26, 26, -23, 21)),
+                    interval = 10, tickLength = -0.15,
+                    lineKula = kulaL(2), tickKula = kulaL(2))
+    
+    # Panel letter
+    text(x = -23.75, y = 18, labels = paste0(letters[ii], ")"), cex = 1.75)
+  
+    # kulaBars -----------------------------------------------------------------
+    # Fine-grained customisation when the defaults don't work
+    zLabels <- NULL
+    if (iiX == "precip_reg") {
+      zLabels <- iiTicks
+      zLabels[1] <- "<-60"
+    }
+    nameOffset <- switch(iiX,
+                         "albd_reg" = , "t2m_reg" = , "mslp_reg" = -1.5,
+                         -1.15)
+    if (iiType == "r2") nameOffset <- -1.25
+    labelFirst <- switch(iiX,
+                         "albd_reg" = , "mslp_reg" = , "lwsd_reg" = ,
+                         "lwsn_reg" = , "lwsu_reg" = , "v10m_mean" = 2,
+                         1)
+    labelCex <- switch(iiX,
+                       "albd_reg" = , 
+                       "w10m_reg" = , "v10m_reg" = , "u10m_reg" = 0.85,
+                       1)
+    # others "should" be okay with the defaults from add_kulaBar
+    
+    # Add the colour bar
+    kulaR::add_kulaBar(kula = iiKula, range = iiRange, increments = iiIncrement,
+                       axisSide = 1,
+                       mar = c(1.6, 1., 1.95, 0.75), 
+                       nameSide = 3, 
+                       labels = zLabels,
+                       labelOffset = 0.65, 
+                       labelEvery = 2,
+                       labelFirst = labelFirst,
+                       labelCex = labelCex,
+                       nameCex = 0.95,
+                       nameOffset = nameOffset,
+                       name = bquote(.(iiUnits)))
+
+    # Change colours so that we can read the colour bar name!
+    if (iiVar == "mslp") {
+      txtKula  <- kulaR::kulaL(3, 8)
+      nameKula <- kulaR::kulaL(1, 10)
+    } else {
+      txtKula  <- kulaR::kulaL(6)
+      nameKula <- kulaR::kulaL(10)
+    }
+      
+    # Add title
+    kulaR::annotate_kulaBar(above = bquote(.(iiName)), cex = 1.2, 
+                            offset_v = 0.62, col = nameKula) 
+    
+    # Add text left & right
+    kulaR::annotate_kulaBar(aboveLeft = iiLeft, aboveRight = iiRight, 
+                            offset_v = 0.8, offset_h = 0.04,
+                            cex = 0.9, col = txtKula)
+  }
+}
+```
+
+# Plot as a PDF ================================================================
+```{r}
+# Version numbers
+if (!exists("vv")) vv <- 0
+vv <- vv + 1
+
+filePath <- paste0(figPath, "fig", params$figName, 
+                   "v", sprintf("%02d", vv), "_regressionMaps.pdf")
+pdf(filePath, width = 10.5, height = 14)
+
+# Layout
+layout(panels)
+par(cex = 1)
+
+# Plot!
+plot_panels()
+```

@@ -1,0 +1,290 @@
+---
+title: an04_create_figure_4.qmd
+abstract: |
+  The purpose of this notebook is to create Figure 4 in the GRL manuscript.
+  Figure 4 plots different melt variables through a melt season, and / or their 
+  correlation with the NOAA CPC daily SAM index.
+  
+  !! This notebook requires output from dt07 (which requires output from dt06).
+  
+  The values shown are the climatology (1980-2018) of the shelfwide-averages.
+  Varirables are smoothed using a running mean (defined in dt06).
+  
+  The daily RACMO data has been shared by co-author Christiaan van Dalum.
+  It is output from RACMO2.3p3 (van Dalum et al. (2022) in The Cryosphere).
+params:
+  windowLength: 9
+---
+
+# Data Prep & Set-Up ===========================================================
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Load in data
+This data must have been created in the dt07 notebook.
+```{r}
+# Preallocate
+kubud <- list()
+
+# Where is the data?
+dirPath  <- "Data/racmoD_running_means/racmoD_running_9/"
+
+# Read in the data
+# for panel a
+kubud$snowmelt$koral <- domR::read_list(paste0(dirPath, 
+        "racmoD_noaaKoral_runningMean9_snowmelt-dt07.json")) |>
+  _$koralCubud$snowmelt_9$regionalMeans
+
+# for panel b
+kubud$snowmelt$klimaM <- domR::read_list(paste0(dirPath, 
+        "racmoD_klima_runningMean9_snowmelt-dt07.json")) |> 
+  _$snowmelt_9$regionalMeans$klimaMean                          
+
+# for panel c
+kubud$snowmelt$lagKaw <- domR::read_list(paste0(dirPath, 
+        "racmoD_noaaKoral_lag_28_runningMean9_snowmelt-dt07.json")) |>
+  _$lagCubud$snowmelt_9_lag_28$regionalMeans
+
+# for panel d
+kubud$albd$klimaM <- domR::read_list(paste0(dirPath,
+        "racmoD_klima_runningMean9_albd-dt07.json")) |>
+  _$albd_9$regionalMeans$klimaMean
+```
+
+# Prep =========================================================================
+We'll prepare the separate plots in distinct chunks as functions and then call 
+them together in the pdf chunk. It keeps it a little tidier to track rather than
+a lot of endless scrolling.
+```{r}
+# Regions & dates in the data
+incRegions <- c("Weddell", "DML", "Amery", "Wilkes")
+dataDates  <- rownames(kubud$snowmelt$koral)
+
+# Dates for the x-axes
+ndjfDates <- c(paste0("Nov-", sprintf("%02d", c(1:30))),
+               paste0("Dec-", sprintf("%02d", c(1:31))),
+               paste0("Jan-", sprintf("%02d", c(1:31))),
+               paste0("Feb-", sprintf("%02d", c(1:28))))
+
+# Colours to distinguish the regions
+kulaN <- c(kulaR::kulaL(4, 10), kulaR::kulaK("okabeitoblack", 8, c(3, 4, 7)))
+
+# Functions repeated on multiple panels
+add_monthly_lines <- function() {
+  # Monthly Lines
+  abline(v = c(31, 62, 91), col = kulaL(4))
+  abline(h = 0, col = kulaL(8, 10), lwd = 2)
+}
+
+add_significance <- function() {
+  # Critical Significance Values (for 39 dof)
+  abline(h = c(-0.3246, -0.4182),
+         lty = c(2, 3), col = kulaR::kulaL(7, 9))
+
+  text(x = 2, y = -0.4182 * 1.03, 
+       "p  =  0.01", cex = 0.7, col = kulaR::kulaL(4), adj = c(0, 0))
+  text(x = 2, y = -0.3246 * 1.03, 
+       "p  =  0.05", cex = 0.7, col = kulaR::kulaL(4), adj = c(0, 0))
+}
+```
+
+## Panel a)
+```{r}
+plot_panel_a <- function() {
+  figuR::pre_plot(xLimits = c(1, 120), yLimits = c(0.2, -0.8), 
+                  
+                  mar = c(0.2, 4.25, 1, 3.5), 
+                  
+                  xLabels = ndjfDates, xLabelEvery = 10, xLabelFirst = 1,
+                  xLabelKula = "white",        # hide labels on this panel
+                  
+                  yName = "SAM-Melt Correlation",
+                  yNameCex = 1.1, yNameOffset = 4.25,
+                  yLabelCex = 0.85,
+                  
+                  yTickBoth = TRUE,
+                  
+                  tagText = "a)", tagCex = 1.5,
+                  tagLocation = c(4.25, -0.7))
+    
+  # Useful Delineations
+  add_monthly_lines()
+  add_significance()
+  
+  # Which rows to plot? (i.e. which dates? not start or end  
+  incRows <- which(rownames(kubud$snowmelt$koral) %in% ndjfDates)
+  
+  # Plot the data
+  for (jj in incRegions) {
+    jjKula <- kulaN[which(incRegions == jj)]
+    jjData <- kubud$snowmelt$koral[[jj]][incRows]
+
+    # plot
+    lines(1:120, jjData,
+        col = jjKula, lwd = 3)
+  }
+  
+  figuR::add_plot_frame()
+}
+plot_panel_a()
+```
+
+## Panel b)
+```{r}
+plot_panel_b <- function() {
+  figuR::pre_plot(xLimits = c(1, 120), yLimits = c(0, 4),
+                  mar = c(1, 4.25, 1, 3.5), 
+                  
+                  xLabels = ndjfDates, xLabelEvery = 10, xLabelFirst = 1,
+                  xLabelKula = "white",        # hide labels on this panel
+
+                  yName = prep_racmo_names("snowmelt", monthlyData = FALSE,
+                                           originalUnits =  FALSE),
+                  yAxisSide = 4,
+                  yNameCex = 1.1, yNameOffset = 1.75,
+                  yLabelCex = 0.85,
+                  
+                  yTickBoth = TRUE,
+                  
+                  tagText = "b)", tagCex = 1.5,
+                  tagLocation = c(4.25, 3.5))
+
+  # Useful Delineations
+  add_monthly_lines()
+
+  # Which rows to plot? (i.e. which dates? not start or end  
+  incRows <- which(rownames(kubud$snowmelt$klimaM) %in% ndjfDates)
+  
+  # Plot the data
+  for (jj in incRegions) {
+    jjKula <- kulaN[which(incRegions == jj)]
+    jjData <- kubud$snowmelt$klimaM[[jj]][incRows]
+    
+    # plot
+    lines(1:120, jjData,
+          col = jjKula, lwd = 3)
+  }
+  
+  figuR::add_plot_frame()
+}
+plot_panel_b()
+```
+
+## Panel c)
+```{r}
+plot_panel_c <- function() {
+  figuR::pre_plot(xLimits = c(1, 120), yLimits = c(0.45, -0.8),
+                  mar = c(0.5, 4.25, 0.35, 3.5), 
+                  
+                  xLabels = ndjfDates, xLabelEvery = 10, xLabelFirst = 1,
+                  xLabelKula = "white",        # hide labels on this panel
+                  
+                  yName = "SAM-Melt\nLagged Correlation",
+                  yNameCex = 1.1, yNameOffset = 1.25, 
+
+                  yInterval = -0.05,
+                  yLabelEvery = 4,
+                  yLabelFirst = 2, 
+                  yLabelCex = 0.85,
+                  
+                  yTickBoth = TRUE,
+                  
+                  yGridEvery = 4,
+                  yGridFirst = 2,
+                  
+                  tagText = "c)", tagCex = 1.5,
+                  tagLocation = c(4.25, -0.7))
+  
+  # Useful Delineations
+  add_monthly_lines()
+  add_significance()
+  
+  # Which rows to plot? (i.e. which dates? not start or end  
+  incRows <- which(rownames(kubud$snowmelt$lagKaw) %in% ndjfDates)
+  
+  # Plot
+  for (jj in incRegions) {
+    jjKula <- kulaN[which(incRegions == jj)]
+    jjData <- kubud$snowmelt$lagKaw[[jj]][incRows]
+
+    # plot
+    lines(1:120, jjData,
+          col = jjKula, lwd = 3)
+  }
+
+  figuR::add_plot_frame()
+}
+plot_panel_c()
+```
+
+## Panel d)
+```{r}
+plot_panel_d <- function() {
+  figuR::pre_plot(mar = c(1.5, 4.25, 0.35, 3.5), 
+    
+                  xName = "",
+                  xLimits = c(1, 120), 
+                  xLabels = ndjfDates, xLabelEvery = 10, xLabelFirst = 1,
+                  xLabelCex = 0.8, xLabelSrt = -10,
+                  
+                  yName = "Albedo", yNameCex = 1.1, yNameOffset = 3.5,
+                  yLimits = c(0.76, 0.88), yInterval = 0.015,
+                  yLabelFirst = 1, yLabelEvery = 2, yGridEvery = 1,
+                  
+                  yAxisSide = 4, 
+                  yLabelCex = 0.85,
+                  
+                  yTickBoth = TRUE,
+                  
+                  tagText = "d)", tagCex = 1.5)
+  
+  # Useful Delineations
+  add_monthly_lines()
+  
+  # Which rows to plot? (i.e. which dates? not start or end  
+  incRows <- which(rownames(kubud$albd$klimaM) %in% ndjfDates)
+  
+  # Plot
+  for (jj in incRegions) {
+    jjKula <- kulaN[which(incRegions == jj)]
+    jjData <- kubud$albd$klimaM[[jj]][incRows]
+
+    # plot
+    lines(1:120, jjData,
+          col = jjKula, lwd = 3)
+  }
+
+  figuR::add_plot_frame()
+}
+plot_panel_d()
+```
+
+# Plot =========================================================================
+```{r}
+# PDF Set-Up
+if (!exists("vv")) vv <- 0
+vv <- vv + 1
+
+fileName <- paste0(figPath, "fig04v", sprintf("%02d", vv), "_dailyPlots.pdf")
+pdf(fileName, height = 10, width = 9)
+
+# The plots!
+figuR::arrange_panels(list(c(1, 100, 1, 25),
+                           c(1, 100, 26, 47),
+                           c(1, 100, 48, 75),
+                           c(1, 100, 76, 100)))
+plot_panel_a()
+plot_panel_b()
+plot_panel_c()
+plot_panel_d()
+
+# Add legend
+legend("bottomleft",
+       inset = c(0.005, 0.0175),
+       c("Weddell", "Dronning Maud Land", "Amery", "Wilkes"), 
+       bg = "white",
+       horiz = TRUE, text.width = NA,
+       col = kulaN, lwd = 3, cex = 0.85)
+```

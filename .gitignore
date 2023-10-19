@@ -1,0 +1,19 @@
+# RStudio related
+.Rhistory
+.Rproj.user
+.Ruserdata
+
+# R package related
+.quarto/
+/renv/
+
+# File Types
+*.nc
+*.url
+
+# Directories
+/Figures/
+/non-git/
+
+# Other
+.DS_Store

@@ -1,0 +1,599 @@
+---
+title: dt07_calculate_racmoD_running_means.qmd
+abstract: |
+  The purpose of this notebook is to create running means of racmoD data. 
+  This data is used for the panels in Figure 4.
+  
+  !! It is necessary to run dt06 for the before using this notebook.
+  
+  Different window lengths for the running mean can be selected, but they should
+  be an odd number. In the GRL manuscript, Figure 4 uses a 9-day window (based 
+  on Robinson (2000) finding a decorrelation period of ~10 days for the SAM).
+  
+  The window is centred: for a 9 day window, every date in the output is 
+  calculated as the mean value of: the day, the 4 days before, and the 4 days 
+  after.
+  
+  There are 4 parts to this notebook, it is quite long!
+  
+  1) Calculate the running mean for every day in the dataset, for each shelf.
+  
+  2) Create a climatology of the running means across all summers.
+     Simply calculates the mean of the running mean across all years for each 
+     monthDay for each shelf, as well as:
+       the Standard Deviation, Median, and InterQuartile & InterDecile Ranges
+     
+  3) Calculate the correlation of the running means with the running SAM.
+     To illustrate: the mean racmoVar on 11--19 December each summer (e.g. 39 
+     values if 1980--2018) is correlated with the mean SAM variable on the 
+     11--19 December each summer.
+     
+  4) Calculate the correlation of the running means against a lagged running 
+     SAM. Set via params:samLag, which indicates how many days the SAM data is 
+     before the variable. 
+     For example, if lag = 7 (and windowLength = 9), the mean racmoVar from the 
+     11--19 Dec (referred to by the midpoint of 15 Dec) is correlated with the 
+     SAM from the 4--12 Dec (referred to as 8 Dec). In Fig. 4 in the GRL 
+     manuscript, this lag is set as 28 days.
+
+params:
+  racmoVar: "snowmelt"
+  windowLength: 9
+  samLag: 28
+---
+
+# Data Prep & Set-Up ===========================================================
+## Set-Up
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Read in data
+The RACMO data must have already been created in dt06.
+The NOAA SAM data is read in later (in Part III) as it is more involved.
+```{r}
+varCode <- paste0("mean_", params$racmoVar)
+racmoVar <- domR::read_list(paste0("Data/shelfwide_mean/racmoD_shelfwide_mean_",
+                            params$racmoVar, "-dt06.json"))[[varCode]]
+```
+
+## Prep for saving
+There are a few different outputs from this notebook.
+We'll make sure the output directory structure is prepared here.
+```{r}
+# Subdirectory location for different running window lengths
+dirPath <- paste0("Data/racmoD_running_means/",
+                  "racmoD_running_", params$windowLength, "/")
+if (!dir.exists(dirPath)) dir.create(dirPath, recursive = TRUE)
+
+# For use in filenames or list titles
+windowVar <- paste(params$windowLength, params$racmoVar, sep = "_")
+varWindow <- paste(params$racmoVar, params$windowLength, sep = "_")
+varWinLag <- paste(varWindow, "lag", params$samLag, sep = "_")
+```
+
+## Prep for running values
+Some of these values are used in different sections below, so we'll define them
+all here.
+```{r}
+# Available Data depends on the dt06 output
+xMonthDays <- unique(x = racmoVar$monthDay)
+xSummers   <- unique(x = racmoVar$summer)
+
+# Accounting for the window
+# For a 9-day window, the first and last 4 days won't have enough side-days 
+sideWindow <- (params$windowLength - 1) / 2  # How long before / after the date?
+usableDays <- xMonthDays[(sideWindow + 1):                  # 1st start of window
+                         (length(xMonthDays) - sideWindow)] # last end of window
+
+# Leap years complicate things
+# In the manuscript, the melt season finishes at the end of February, so I
+# therefore just ignore any 29-Feb data here and only plot until the 28th Feb.
+if ("Feb-29" %in% usableDays) {
+  usableDays <- usableDays[-which(usableDays == "Feb-29")]
+}
+```
+
+## Prep for calculating regional values
+Define the regions here.
+```{r}
+# Regions
+regionNames   <- c("Weddell", "DML", "Amery", "Wilkes", "Oates", "Ross")
+regionShelves <- list("Weddell" = c("Brunt_Stancomb", "Riiser-Larsen"),
+                      "DML"     = c("Ekstrom", "Atka", "Jelbart", "Fimbul", 
+                                    "Vigrid", "Nivl", "Lazarev", "Borchgrevink", 
+                                    "Baudouin", "Prince_Harald"),
+                      "Amery"   = c("Amery", "Amery"), # x2 allows loop rowMeans
+                      "Wilkes"  = c("West", "Shackleton", "Tracy_Tremenchus", 
+                                    "Conger_Glenzer", "Totten", 
+                                    "Moscow_University", "Holmes"),
+                      "Oates"   = c("Mertz", "Ninnis", "Cook", "Rennick"),
+                      "Ross"    = c("Mariner", "Nansen", "Drygalski"))
+
+# A formatted version of the above to add as metadata to the json list we save
+metaShelves <- paste0(regionNames, ":", 
+                      sapply(regionShelves, paste0, collapse = ", "), 
+                      collapse = " || ")
+```
+
+## Preallocate templates
+All climatology and correlation data will be stored in separate dataframes; rows
+are dates, and columns are regional or shelf values.
+```{r}
+# Each row will be a date
+uniqueDates <- unique(racmoVar$monthDay) 
+
+# This matrix is used as a template for storing data later
+cubud <- matrix(NA, 
+                ncol = length(pToken$shelves), 
+                nrow = length(uniqueDates)) |>
+  `colnames<-`(pToken$shelves) |>
+  `rownames<-`(uniqueDates) 
+
+# For regional means
+regCubud <- matrix(NA, 
+                   ncol = length(regionNames),
+                   nrow = length(uniqueDates)) |>
+  `colnames<-`(regionNames) |>
+  `rownames<-`(uniqueDates) |> 
+  as.data.frame()
+```
+
+# Part I: Calculate running means ==============================================
+## Calculate running means for each day
+```{r}
+# Preallocate
+runningVar <- racmoVar[, pToken$shelves] * NA
+
+# It takes a few seconds
+start <- domR::start_timer("Calculating running means")
+
+# For each date
+for (ii in usableDays) {
+  # For each summer
+  for (jj in xSummers) {
+    # Which rows are included in the window?
+    ijIndex <- which(racmoVar$monthDay == ii & racmoVar$summer == jj)
+    ijStart <- ijIndex - sideWindow
+    ijEnd   <- ijIndex + sideWindow
+    
+    # Calculate the mean of them
+    ijData <- racmoVar[ijStart:ijEnd, pToken$shelves]
+    ijMean <- apply(ijData, 2, mean)
+    
+    # Store
+    runningVar[ijIndex, ] <- ijMean
+  }
+}
+end <- domR::end_timer(start, "running means")
+```
+
+## Prep for saving
+```{r}
+# Necessary precision? Simplification
+varPrec <- max(domR::count_decimal_places(racmoVar[1:100, ncol(racmoVar)]))
+
+# Round the values and recombine with the dates
+runningVar <- cbind(racmoVar[, which(colnames(racmoVar) %notIn% pToken$shelves)],
+                    round(runningVar, varPrec + 1))
+```
+
+## Save Running Means (RACMO Data)
+```{r}
+blurb1 <- paste("Running means of the daily shelfwide", params$racmoVar,
+                "RACMO data. The input values are the shelfwide average", 
+                params$racmoVar, ", calculated in dt06. The values here are",
+                "calculated as the mean of the given date, the", sideWindow, 
+                "days before, and the", sideWindow, "days after. The dates",
+                "therefore refer to the middle of a", params$windowLength,
+                "day window.")
+
+# We'll store as a list with metadata                   
+toSaveRunning <- list()
+toSaveRunning$info <- domR::get_metadata(format = "json",
+                                         blurb  = blurb1,
+                                         "dt07" = "from Part I")
+toSaveRunning[[varWindow]] <- runningVar
+
+# Save list
+fnRunning <- paste0(dirPath, "racmoD_runningMean", windowVar, "-dt07.json")
+domR::save_list(x = toSaveRunning, filename = fnRunning)
+```
+
+# Part II: Create Climatology Statistics =======================================
+## Guard
+This part of the notebook requires that the output from Part I is in the memory.
+If it is not, but it has been created, run this chunk.
+```{r}
+# Make sure necessary values are in memory
+if (!exists("runningVar")) {
+  fileName <- paste0(dirPath, paste("racmoD_running", params$windowLength, 
+                                   params$racmoVar, sep = "_"), "-dt08.json")
+  runningVar <- domR::read_list(fileName)[[2]]
+} else {
+  message("Data already created and available!")
+}
+```
+
+## Preallocate
+```{r}
+# Preallocate for different statistics
+klimaMean <- cubud                         # for mean value
+klimaSD   <- cubud                         # for Standard Deviation
+klimaMed  <- cubud                         # for Median
+klimaIQR  <- cubud                         # for InterQuartile Range
+klimaIDR  <- cubud                         # for InterDecile Range
+
+# Later these matrices will become dataframes and be combined as a single list 
+# object to save
+```
+
+## Calculate statistics
+```{r}
+for (ii in uniqueDates) {
+  # Get data
+  iiIndex <- which(runningVar$monthDay == ii)
+  iiData  <- runningVar[iiIndex, pToken$shelves]
+  
+  # Calculate statistics
+  klimaMean[ii, ] <- apply(X = iiData, MARGIN = 2, FUN = mean)
+  klimaSD[ii, ]   <- apply(X = iiData, MARGIN = 2, FUN = sd)
+  klimaMed[ii, ]  <- apply(X = iiData, MARGIN = 2, FUN = median)
+  klimaIQR[ii, ]  <- apply(X = iiData, MARGIN = 2, FUN = IQR, na.rm = TRUE)
+  klimaIDR[ii, ]  <- apply(X = iiData, MARGIN = 2, 
+                           FUN = domR::calc_quantile_range,
+                           lower = 0.1, upper = 0.9, na.rm = TRUE)
+}
+
+# Combine into a list of dataframes; we'll use lapply and column names to group
+klimaCubud <- list("shelfStats" = list("klimaMean" = as.data.frame(klimaMean), 
+                                       "klimaSD"   = as.data.frame(klimaSD), 
+                                       "klimaMed"  = as.data.frame(klimaMed), 
+                                       "klimaIQR"  = as.data.frame(klimaIQR), 
+                                       "klimaIDR"  = as.data.frame(klimaIDR)))
+```
+
+## Calculate Regional Values
+The regional values are the mean of the calculated statistic across the shelves 
+in a region (regions are defined in the Prep Chunks).
+```{r}
+klimaCubud$regionalMeans <- list("klimaMean"  = regCubud,
+                                 "klimaSD"    = regCubud,
+                                 "klimaMed"   = regCubud,
+                                 "klimaIQR"   = regCubud,
+                                 "klimaIDR"   = regCubud)
+# Loop through different statistic datasets
+for (ii in 1:5) {
+  iiData <- klimaCubud$shelfStats[[ii]]    # so klimaMean, klimaSD, etc.
+  
+  # Loop through regions and calculate mean for each
+  for (jj in seq_along(regionNames)) {
+    # jj region data
+    jjName    <- regionNames[jj]
+    jjShelves <- regionShelves[[jj]]
+    
+    # Calculate regional values
+    ijData    <- iiData[, jjShelves] |> rowMeans(na.rm = TRUE)
+    
+    # Store
+    klimaCubud$regionalMeans[[ii]][[jjName]] <- ijData
+  }
+}
+```
+
+## Save Climatology of Running Means
+```{r}
+# We'll store as a list with metadata
+toSaveKlima <- list()
+
+blurb2 <- paste("These statistics are calculated on the running mean values.",
+                "To explain: the shelfwide mean", params$racmoVar, "for each",
+                "day is calculated (in dt06); then converted to a running mean",
+                "(e.g. mean of a 9-day window) in dt07, part I; then the",
+                "statistic is calculated for each monthDay across all summers",
+                "(e.g. mean, IQR, StDev) in dt07, part II. The regional values",
+                "are then the mean value of that statistic for the shelves in",
+                "a region.")
+
+toSaveKlima$info <- domR::get_metadata(format = "json",
+                                       blurb  = blurb2,
+                                       "dt07"    = "from Part II",
+                                       "regions" = regionNames,
+                                       "shelves" = metaShelves)
+toSaveKlima[[varWindow]] <- klimaCubud
+
+# Save list
+fnKlima <- paste0(dirPath, "racmoD_klima_runningMean", windowVar, "-dt07.json") 
+domR::save_list(x = toSaveKlima, filename = fnKlima)
+```
+
+# Part III: Calculate Running Correlations with SAM ============================
+## Prepare SAM data ------------------------------------------------------------
+The chunks preparing SAM do not need to be run if the necessary SAM data has 
+already been created before (i.e. with the same `params$windowLength`). They do
+need running if using different `params$windowLength`.
+
+For example, the first time this notebook is run for snowmelt, the SAM data
+will be prepared and saved. To do this, run chunks with "1st time" after their 
+title. When running the notebook again (e.g. for t2m), the SAM data already 
+exists and it is not necessary to run the SAM part again. Instead, load it into 
+memory (chunks with "SAM exists" after the title).
+
+### Access Daily SAM data (1st time)
+```{r}
+# Read in raw data
+noaaRaw <- read.csv("../../Data/Climate Indices/SAM/aao_NOAA_daily.csv")
+colnames(noaaRaw)[4] <- "sam"          # rename from "aao_index_cdas"
+noaaRaw$sam <- round(noaaRaw$sam, 4)   # remove unnecessary precision
+
+# Now to select only the dates we want
+# First, create columns to filter with 
+noaaRaw$summer <- noaaRaw$year
+noaaRaw$summer[noaaRaw$month > 3] <- noaaRaw$summer[noaaRaw$month > 3] + 1
+
+# monthDays need to match, so create years, then extract month in right format
+noaaRaw$date <- paste(noaaRaw$year,
+                      month.abb[noaaRaw$month],
+                      sprintf("%02d", noaaRaw$day))
+
+noaaRaw$monthDay <- terrapin::handle_monthDays(noaaRaw$date)
+```
+
+### Smooth SAM (1st time)
+We want to create a running window that matches the RACMO variables in length.
+This smoothing is necessary for Part III (here) and Part IV (w/ lagged SAM).
+```{r}
+# Create a new column to hold the smoothed / running value
+smoothName <- paste0("sam", params$windowLength)
+noaaRaw[[smoothName]] <- noaaRaw$sam * NA
+
+# Calculate the smoothed values by looping through dates
+for (ii in (sideWindow + 1):(nrow(noaaRaw) - sideWindow)) {
+  iiStart <- ii - sideWindow
+  iiEnd <- ii + sideWindow
+  
+  # SAM Mean
+  noaaRaw[ii, smoothName] <- noaaRaw$sam[iiStart:iiEnd] |> mean() |> round(4)
+}
+```
+
+### Save SAM (1st time)
+```{r}
+blurb3 <- paste("Daily SAM index from NOAA CPC. The values are also smoothed,",
+                "using a", params$windowLength, "day running mean in dt07,",
+                "part III. The smooth values are calculated as the mean of the",
+                "values on the day, the", sideWindow, "days before, and the", 
+                sideWindow, "days after. The dates therefore refer to the", 
+                "middle of a", params$windowLength, "day window.")
+
+# We'll store as a list with metadata
+toSaveNoaa <- list()
+toSaveNoaa$info <- domR::get_metadata(format = "json",
+                                      blurb  = blurb3,
+                                      "dt07" = "from Part III",
+                                      "noaa" = "NOAA CPC AAO")
+toSaveNoaa$NOAA_SAM = noaaRaw
+
+# Save list
+fnNoaa <- paste0(dirPath, "noaaD_runningMean", params$windowLength, "-dt07.json")
+domR::save_list(x = toSaveNoaa, filename = fnNoaa)
+```
+
+### Load SAM (SAM exists)
+```{r}
+fnNoaa <- paste0(dirPath, "noaaD_runningMean", params$windowLength, "-dt07.json")
+noaaRaw <- domR::read_list(fnNoaa)[[2]]
+smoothName <- paste0("sam", params$windowLength)
+```
+
+### Filter SAM ready for contemporary correlation
+```{r}
+# Then filter based on these new columns
+noaaNow <- domR::sift(noaaRaw, "summer in vector", xSummers)
+noaaNow <- noaaNow[which(noaaNow$monthDay %in% uniqueDates), ] # sift fails so manually
+```
+
+## Correlate Running SAM and Running RACMO -------------------------------------
+It is necessary to have output from Part I to go further. See the "Guard" 
+section in Part II above for more info & loading it.
+```{r}
+# Preallocate
+koralSam <- list("r" = cubud,
+                 "p" = cubud)
+
+# Loop through available - maybe ~10 seconds
+for (ii in usableDays) {
+  # Identify date in both datasets
+  iiIndexR <- which(runningVar$monthDay == ii)
+  iiIndexN <- which(noaaNow$monthDay == ii)
+  
+  # Guard against the dates not matching (compare year in them all)
+  indexTst <- sum(runningVar$year[iiIndexR] != noaaNow$yearr[iiIndexN])
+  if (indexTst != 0) stop("Something went wrong with the alignment!")
+  
+  # Get smoothed NOAA data for the ii dates, detrended
+  iiNoaa  <- noaaNow[iiIndexR, smoothName] |> linear_detrend()
+
+  # Loop through shelves
+  for (jj in pToken$shelves) {
+    # Get shelf's RACMO data on the iiDates, detrended
+    ijRacmo <- runningVar[iiIndexR, jj] |> linear_detrend()
+    
+    # Correlate RACMO and NOAA
+    ijKaw   <- cor.test(x = iiNoaa, y = ijRacmo,
+                        method = "pearson") |> 
+      suppressWarnings()  # when no melt, there is 0 SD & no return
+    
+    # Store correlation (koral) info
+    koralSam$r[ii, jj] <- ijKaw$estimate |> round(3)
+    koralSam$p[ii, jj] <- ijKaw$p.value  |> round(3)  # unnecessary w/ means?
+  }
+}
+```
+
+## Calculate Regional Values  --------------------------------------------------
+### Prepare
+```{r}
+# Data frames allow easier indexing into w/ names
+koralSam <- list("r" = as.data.frame(koralSam$r),
+                 "p" = as.data.frame(koralSam$p))
+                 
+# Prep to store all koral data in the cubud
+koralCubud <- list()
+koralCubud[[varWindow]]  <- list("shelfStats" = koralSam)
+
+# Preallocate
+regKoral <- regCubud
+```
+
+### Calculate the mean for the region
+The mean of the shelves in each region.
+```{r}
+for (ii in 1:6) {
+  iiName    <- regionNames[ii]
+  iiShelves <- regionShelves[[ii]]
+
+  # Add mean values
+  regKoral[[iiName]] <- koralSam$r[, iiShelves] |> rowMeans()
+}
+
+# Store in the cubud
+koralCubud[[varWindow]]$regionalMeans <- regKoral
+```
+
+## Save SAM-RACMO Running Correlation
+```{r}
+# We'll store as a list with metadata
+toSaveKoral <- list()
+blurb4 <- paste("These correlations are calculated using the", 
+                params$windowLength, "day running mean values for the NOAA SAM", 
+               "index and the shelfwide RACMO", params$racmoVar, "data. The",
+               "correlations are calculated using the Pearson Product Moment",
+               "Correlation test. The regional values are then the mean value",
+               "of the correlations (r value) for the shelves in a region.")
+toSaveKoral$info <- domR::get_metadata(format = "json",
+                                       blurb  = blurb4,
+                                       "dt07"     = "from Part III",
+                                       "regions"  = regionNames,
+                                       "shelves"  = metaShelves,
+                                       "method"   = ijKaw$method,
+                                       "alt_hypothesis"  = ijKaw$alternative)
+toSaveKoral$koralCubud <- koralCubud
+
+# Save list
+fnKoral <- paste0(dirPath, "racmoD_noaaKoral_runningMean", windowVar, "-dt07.json")
+domR::save_list(x = toSaveKoral, filename = fnKoral)
+```
+
+# Part IV: Calculate Lagged Running Correlation with SAM =======================
+## Prep
+The "noaaRaw" dataset must be available and prepared; if not, run the "Prepare
+SAM data" in Part III above.
+```{r}
+# Strip out the summers we aren't interested in
+noaaLag <- domR::sift(noaaRaw, "summer in vector", xSummers)
+
+# Preallocate
+koralLag <- list("r" = cubud,
+                 "p" = cubud)
+```
+
+## Correlate lagged SAM-RACMO
+```{r}
+# For each date we want data for
+for (ii in usableDays) {
+  # Find the ii date in the RACMO dataset
+  iiIndexR    <- which(runningVar$monthDay == ii) # in RACMO, straightforward
+  
+  # Find the ii date in the NOAA dataset
+  iiIndexRawN <- which(noaaLag$monthDay == ii)    # in NOAA
+  iiIndexLagN <- iiIndexRawN - params$samLag      # but we want an offset
+  
+  # GUARD ----------------------------------------------------------------------
+  # Make sure the same years are being aligned
+  # Guard 1: Same length?
+  if (length(iiIndexR) != length(iiIndexLagN)) stop("Alignment issue!")
+  
+  # Guard 2: Same summers?
+  gd2 <- (runningVar$summer[iiIndexR] != noaaLag$summer[iiIndexLagN])
+  if (sum(gd2) != 0) stop("Alignment issue!")
+  
+  # CALCULATION ----------------------------------------------------------------
+  # Get NOAA data for day ii
+  iiNoaa <- noaaLag[iiIndexLagN, smoothName] |> linear_detrend()
+  
+  # Calculate lagged SAM- melt correlation for each ice shelf
+  for (jj in pToken$shelves) {
+    ijRacmo <- runningVar[iiIndexR , jj] |> linear_detrend()
+    
+    # Correlate RACMO and NOAA
+    ijKaw   <- cor.test(x = iiNoaa, y = ijRacmo,
+                        methods = "pearson") |> 
+      suppressWarnings()  # when no melt, there is 0 SD & no return
+    
+    # Store correlation (koral) info
+    koralLag$r[[ii, jj]] <- ijKaw$estimate |> round(3)
+    koralLag$p[[ii, jj]] <- ijKaw$p.value |> round(3)
+  }
+}
+```
+
+## Calculate Regional Values ---------------------------------------------------
+### Prepare
+```{r}
+# Data frames allow easier indexing into w/ names
+lagSam <- list("r" = as.data.frame(koralLag$r),
+               "p" = as.data.frame(koralLag$p))
+                 
+# Prep to store all koral data in the cubud
+lagCubud <- list()
+lagCubud[[varWinLag]]  <- list("shelfStats" = lagSam)
+
+# Preallocate
+regLag <- regCubud
+```
+
+### Calculate the regional means
+```{r}
+for (ii in 1:6) {
+  iiName    <- regionNames[ii]
+  iiShelves <- regionShelves[[ii]]
+
+  # Add mean values
+  regLag[[iiName]] <- koralLag$r[, iiShelves] |> rowMeans()
+}
+
+# Store in the cubud
+lagCubud[[varWinLag]]$regionalMeans <- regLag
+```
+
+## Save Lagged SAM-RACMO Running Correlations 
+```{r}
+# We'll store as a list with metadata
+toSaveLagged <- list()
+blurb5 <- paste("SAM-RACMO correlations, calculated using the running means of", 
+                "daily data. These correlations differ from those found in the",
+                "'racmoD_noaaKoral_xxx_-dt07' files because these correlations",
+                "use lagged values. For example, (if windowLength is 9 and",
+                "samLag is 7), the value on the 15th Dec is calculated as the",
+                "correlation between the mean, shelfwide RACMO variable for",
+                "the 11--19 Dec (9 day window), and the mean SAM index for the",
+                "4-12 Dec (9 day window, 7 day lag). The regional values are",
+                "then the mean value of these correlations for the shelves in",
+                "a region.")
+
+toSaveLagged$info <- domR::get_metadata(format = "json",
+                                        blurb  = blurb5,
+                                        "dt07"    = "from Part IV",
+                                        "regions" = regionNames,
+                                        "shelves" = metaShelves,
+                                        "method"  = ijKaw$method,
+                                        "alt_hypothesis"  = ijKaw$alternative)
+toSaveLagged$lagCubud <- lagCubud
+
+# Save list
+fnLagged <- paste0(dirPath, "racmoD_noaaKoral_lag_", params$samLag, 
+                   "_runningMean", windowVar, "-dt07.json")
+domR::save_list(x = toSaveLagged, filename = fnLagged)
+```

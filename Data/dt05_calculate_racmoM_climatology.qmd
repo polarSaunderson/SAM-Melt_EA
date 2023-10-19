@@ -1,0 +1,217 @@
+---
+title: dt05_calculate_racmoM_climatology.qmd
+abstract: |
+  The purpose of this notebook is to calculate the climatology of the monthly 
+  RACMO or ERA5 variables.
+  The NetCDFs output from this notebook are used in an03 to create Supplementary 
+  Figures for the GRL manuscript.
+  
+  The following RACMO variables can be used:
+    - snowmelt, albd, t2m;
+    - seb, radi, gbot;
+    - turb, latf, senf;
+    - swsd, swsu, swsn; 
+    - lwsd, lwsu, lwsn;
+    - w10m, u10m, v10m;
+    - smb, precip, sndiv, subl.
+    
+  !! The following variables can only be used if they've been derived in dt01:
+    - turb, radi, w10m, seb, albd, swsn, lwsn
+
+params:
+  months:  [12, 1]
+  summers: !expr c(1980:2018)
+---
+
+# Data Prep & Set-Up ===========================================================
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Which variables?
+```{r}
+klimaMean <- c("t2m", "albd", "mslp",
+               "w10m", "v10m", "u10m")
+
+klimaSum <- c("snowmelt", "precip",
+              "swsn", "swsd", "swsu", 
+              "lwsn", "lwsd", "lwsu",
+              "seb", "radi", "turb",
+              "senf", "latf", "gbot")
+
+klimaVars <- c(klimaMean, klimaSum)
+
+# which months? Initials are used in metadata and filename
+mInitials <- domR::get_initials(month.abb[params$months])
+```
+
+## Prep functions
+```{r}
+## Some units are easier to interpret / handle
+convert_units <- function(x, variable) {
+  # Get the metadata (lost when modifying the values)
+  longname <- terra::longnames(x)
+  varnames <- terra::varnames(x)
+  
+  # from Joules to Watts
+  if (variable %in% pToken$varEnergy) {
+    newUnits <- gsub("J", "W", terra::units(x))
+    x <- x / (60 * 60 * 24 * 31)                 # !! assumes Jan / Dec
+  } else if (variable %in% pToken$varTemperature) {
+    newUnits <- gsub("K", "ºC", terra::units(x))
+    x <- x - 273.15
+  } else if (variable %in% pToken$varGeopotential) {
+    newUnits <- gsub("m**2", "m", terra::units(x))
+    x <- x / 9.8065
+  } else if (variable %in% pToken$varPressure) {
+    newUnits <- gsub("Pa", "hPa", terra::units(x))
+    x <- x / 100
+  } else {
+    noChange <- TRUE
+  }
+  
+  # Only change if necessary
+  if (!exists("noChange")) {
+    # Add the metadata back
+    terra::units(x) <- newUnits
+    terra::longnames(x) <- longname
+    terra::varnames(x) <- varnames
+  }
+  
+  return(x)
+}
+
+## Get the info from a SpatRaster before it is lost in (e.g.) `terra::mean()`.
+get_terra_info <- function(x) {
+  xUnit <- terra::units(x)
+  xLong <- terra::longnames(x)
+  xVars <- terra::varnames(x)
+  
+  return(list("unit" = xUnit,
+              "longname" = xLong,
+              "varname" = xVars))
+}
+```
+
+# Calculate Climatology & Save as NetCDFs
+```{r}
+for (ii in klimaVars) {
+  start <- start_timer(ii)
+  if (ii %in% pToken$varERA5) {
+    # Access raw ERA5 data -----------------------------------------------------
+    iiPath <- "../../Data/ERA5/Antarctic_DJ_variables/"
+    iiFile <- paste0(iiPath, "ERA5_", toupper(ii), "_1979-2021_DJ_monthly.nc")
+    iiData <- terra::rast(iiFile)
+
+    # Subset
+    iiData <- terrapin::subset_by_summer(iiData, summers = params$summers) |>
+      terrapin::subset_by_month(months = params$months)
+    
+    # Convert the units --------------------------------------------------------
+    iiData <- convert_units(x = iiData, variable = ii) # !! assumes Dec & Jan !!
+    
+    # Info (taken here from raw as it gets lost in terra::crop)    
+    iiInfo <- get_terra_info(iiData)
+    
+    # Assign CRS & crop to southern hemisphere
+    terra::crs(iiData) <- terra::crs("epsg:4326")
+    iiData <- terra::crop(iiData, terra::ext(c(-180, 180, -90, -25)))
+    
+    # Add info back
+    terra::varnames(iiData)  <- iiInfo$varname
+    terra::longnames(iiData) <- iiInfo$longname
+    terra::units(iiData)     <- iiInfo$unit
+  } else if (ii %in% pToken$varRACMO) {
+    # Access & subset raw racmoM data ------------------------------------------
+    iiData <- polarcm::subset_racmoM_by_summer(racmoData = ii, 
+                                               summers = params$summers, 
+                                               australSplit = 3) |>
+      polarcm::subset_racmoM_by_month(months = params$months, 
+                                      excludeIncomplete = 3)
+    
+    # Convert the units --------------------------------------------------------
+    iiData <- convert_units(x = iiData, variable = ii) # !! assumes Dec & Jan !!
+    
+    # Info (taken here from raw as it gets lost in terra::mean and terra::stdev)    
+    iiInfo <- get_terra_info(iiData)
+  } else {
+    stop("Unknown variable!")
+  }
+
+  # Prep - from months to summer values ----------------------------------------
+  if (ii %in% pToken$varMeanable) {
+    iiData <- polarcm::calc_fun_australM(x = iiData, 
+                                         FUN = "mean",
+                                         months = params$months, 
+                                         australSplit = 3)
+  } else if (ii %in% pToken$varSummable) {
+    iiData <- polarcm::calc_fun_australM(x = iiData, 
+                                         FUN = "sum",
+                                         months = params$months, 
+                                         australSplit = 3)
+  } else (
+    stop("Unknown variable!")
+  )
+  
+  # Calculate the climatology --------------------------------------------------
+  iiMean  <- terra::mean(iiData, na.rm = TRUE)
+  iiStDev <- terra::stdev(iiData, na.rm = TRUE)
+
+  # Reproject ERA5 to RACMO (eases plotting in a loop in an03)
+  # Ignore the warning, GDAL just has issues with the RACMO projection.
+  if (ii %in% pToken$varERA5) {
+    iiMean  <- terra::project(iiMean, polarcm::use_crs("racmo"))
+    iiStDev <- terra::project(iiStDev, polarcm::use_crs("racmo"))
+  }
+  
+  # Prep metadata --------------------------------------------------------------
+  blurb <- paste("The mean and standard deviation of the", mInitials, "values",
+                 "each summer. Energy and mass fluxes are calculated as the",
+                 "sum each summer (e.g. the total snowmelt over Dec & Jan); in",
+                 "contrast, temperatures, albedo, winds and pressures use the",
+                 "mean values (e.g. the average temperature of Dec & Jan).")
+  iiMeta <- domR::get_metadata(format = "NetCDF", blurb = blurb)
+  iiLong <- iiInfo$longname[1] |>
+    paste0(" (", mInitials, c(" mean", " StDev"), ")")
+  iiVars <- iiInfo$varname[1] |>
+    paste0(" (", mInitials, c(" mean", " StDev"), ")")
+  if (ii %in% klimaSum) {
+    iiUnits <- iiInfo$unit[1] |>
+      paste0(" month-1 (", mInitials, c(" mean", " StDev"), ")")
+  } else {
+    iiUnits <- iiInfo$unit[1] |>
+      paste0(" (", mInitials, c(" mean", " StDev"), ")")
+  }
+    
+  # Prep file names & path -----------------------------------------------------
+  dirPath <- domR::cat_path("Data/racmo_climatology", 
+                            paste0("racmoM_", mInitials),
+                            paste0("klima", paste(range(params$summers), 
+                                                  collapse = "_")))
+
+  if (!dir.exists(dirPath)) dir.create(dirPath, recursive = TRUE)
+  meanPath <- paste0(dirPath, "racmoM_klimaMean_", 
+                     mInitials, "_", ii, "-dt05.nc")
+  stdvPath <- gsub("Mean", "SD", meanPath)
+  
+  # Save as a NetCDF -----------------------------------------------------------
+  terra::writeCDF(iiMean, filename = meanPath,
+                  overwrite = TRUE,
+                  unit = iiUnits[1],
+                  varname = iiVars[1],
+                  longname = iiLong[1],
+                  atts = iiMeta)
+  domR::print_on_saving(meanPath)
+  
+  terra::writeCDF(iiStDev, filename = stdvPath,
+                  overwrite = TRUE,
+                  unit = iiUnits[2],
+                  varname = iiVars[2],
+                  longname = iiLong[2],
+                  atts = iiMeta)
+  domR::print_on_saving(stdvPath)
+  domR::end_timer(start, ii)
+  domR::print_line(nStart = 0)
+}
+```

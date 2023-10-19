@@ -1,0 +1,72 @@
+---
+title: dt00_identify_shelves.qmd
+abstract: |
+  The purpose of this notebook is to identify which ice shelves to analyse.
+  We use ice shelves meeting the following criteria:
+    - in East Antarctica
+    - at least 2 RACMO pixels are > 50 % ice shelf, according to MEaSURES
+  This gives 27 ice shelves, and excludes the smallest shelves that don't align 
+  well with the RACMO grid.
+  The MEaSURES data is from Mouginot et al. (2017).
+  The RACMO data is from van Dalum et al. (2021).
+---
+
+# Data Prep & Set-Up
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Only shelves in East Antarctica
+```{r}
+aaShelves   <- polarcm::get_shelf_outline("")           # all shelves
+eastShelves <- aaShelves[aaShelves$Regions == "East"]   # just East
+eastNames   <- eastShelves$NAME
+
+# For our purposes, we won't consider Ross_East or Filchner as East Antarctica
+eastNames <- eastNames[-which(eastNames %in% c("Ross_East", "Filchner"))]
+```
+
+## Prep
+```{r}
+# Preallocate
+pixelCubud <- matrix(NA, nrow = length(eastNames), ncol = 4) |>
+  `rownames<-`(eastNames) |>
+  `colnames<-`(c(0.25, 0.5, 0.75, 0.9)) |>  # thresholds for minimum pixel area
+  as.data.frame()
+
+# Dummy data to extract from
+# We'll use terra::extract, but we're interested in the fraction, not the value
+dummy <- polarcm::read_racmoM("smb")[[1]]
+```
+
+## Count pixels
+```{r}
+# Loop through shelves and count pixels that are at least x % shelf
+for (ii in eastNames) {
+  iiShelf <- polarcm::get_shelf_outline(ii)
+  iiExtra <- terra::extract(x = dummy, y = iiShelf, exact = TRUE)
+  iiSize  <- iiExtra$fraction
+  
+  # Count of pixels > value
+  pixelCubud[ii, 1] <- length(iiSize[iiSize > 0.25])
+  pixelCubud[ii, 2] <- length(iiSize[iiSize > 0.5])
+  pixelCubud[ii, 3] <- length(iiSize[iiSize > 0.75])
+  pixelCubud[ii, 4] <- length(iiSize[iiSize > 0.9])
+}
+```
+
+# Print out final result
+These are the 27 shelves that were used for the manuscript.
+```{r}
+cat("At least 2 RACMO pixels which are 50% shelf:\n")
+racmo50 <- rownames(pixelCubud)[pixelCubud[, 2] > 1]
+sort(racmo50) |> print()
+```
+
+# Print out all results
+This is the output for all thresholds checked, showing how many pixels were 
+greater than a certain fraction ice shelf.
+```{r}
+print(pixelCubud)
+```

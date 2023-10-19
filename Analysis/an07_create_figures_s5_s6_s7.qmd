@@ -1,0 +1,260 @@
+---
+title: an07_create_figures_s5_s6_s7.qmd
+abstract: |
+  The purpose of this notebook is to create supplementary figures S5, S6 and S7.
+  These are different melt-related climate variables from RACMO through the melt
+  season, using daily resolution model output.
+  
+  !! These figures require the output fom dt07 (which requires dt06).
+  
+  It is possible to plot:
+      "mean"        climatology (1980-2018)
+      "stdev"       interannual variability
+      "koral"       correlation with the SAM
+      
+  The variables are shelfwide-averages, that have been regionally averaged.
+  They are smoothed with a running mean:
+    - 9 days by default
+    - any value is possible, but create it in dt07 first!
+  
+  The daily RACMO data has been provided by co-author Christiaan van Dalum.
+  It is the output fom RACMO2.3p3 (van Dalum et al. (2022) in The Cryosphere).
+  
+  To recreate the figures in the supplementary, set the params accordingly; all
+  plots in the manuscript and supplementary use a windowLength of 9.
+    
+  For Figure S5:
+    figName:   "S5"
+    racmoVars: ["swsd", "t2m", "lwsd"]
+    plotType:  ["mean", "mean", "mean"]
+      
+  For Figure S6:
+    figName:   "S6"
+    racmoVars: ["albd", "t2m", "swsd", "lwsd"]
+    plotType:  ["koral", "koral", "koral", "koral"]
+  
+  For Figure S7:
+    figName:   "S7"
+    racmoVars: ["albd", "swsd", "t2m", "lwsd"]
+    plotType:  ["stdev", "stdev", "stdev", "stdev"]
+      
+params:
+  figName:   "S5"
+  racmoVars: ["swsd", "t2m", "lwsd"]
+  plotType:  ["mean", "mean", "mean"]
+  windowLength: 9
+---
+
+# Data Prep & Set-Up
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+## Prep Set-Up
+```{r}
+# Dates for the x-axis labels
+ndjfDates <- c(paste0("Nov-", sprintf("%02d", c(1:30))),
+               paste0("Dec-", sprintf("%02d", c(1:31))),
+               paste0("Jan-", sprintf("%02d", c(1:31))),
+               paste0("Feb-", sprintf("%02d", c(1:28))))
+
+# Used for keeping track
+varCount <- length(params$racmoVars)
+
+# kulas
+kulaN <- c(kulaR::kulaL(4, 10),    # grey
+           kulaR::kulaK("okabeitoblack", count = 8, include = c(3, 4, 7)))
+```
+
+## Prepare filepaths
+```{r}
+dirPath <- paste0("Data/racmoD_running_means/racmoD_running_", 
+                  params$windowLength, "/")
+
+klimaPath <- paste0(dirPath, "racmoD_klima_runningMean", 
+                    params$windowLength, "_")
+
+koralPath <- paste0(dirPath, "racmoD_noaaKoral_runningMean", 
+                    params$windowLength, "_")
+```
+
+## Get the data
+```{r}
+# Preallocate
+kubud <- list()
+
+for (ii in 1:varCount) {
+  iiVar  <- params$racmoVars[ii]
+  iiType <- params$plotType[ii] |> tolower()
+  iiWinType <- paste(iiVar, params$windowLength, sep = "_")
+  iiPath <- switch(iiType,
+                   "mean" = ,
+                   "stdev" = klimaPath,
+                   "koral" = koralPath,
+                   stop())
+
+  # Read in the correct data
+  if (iiType %in% c("mean", "stdev")) {
+    iiData <- paste0(klimaPath, iiVar, "-dt07.json") |>
+      domR::read_list() |>
+      _[[iiWinType]]$regionalMeans
+    if (iiType == "mean") iiData <- iiData$klimaMean
+    if (iiType == "stdev") iiData <- iiData$klimaSD
+  } else if (iiType == "koral") {
+    iiData <- paste0(koralPath, iiVar, "-dt07.json") |>
+      domR::read_list() |>
+      _$koralCubud[[iiWinType]]$regionalMeans
+  } else {
+    stop("set params plotType as 'mean', 'stdev' or 'koral'")
+  }
+
+  # Store it
+  kubud[[iiVar]][[iiType]] <- iiData
+}
+```
+
+## Plot Names
+Do NOT try to use the `prep_racmo_names` function beyond this chunk.
+It works here, but it is very unconstrained - the results can easily be wrong.
+```{r}
+# Preallocate
+nameList <- list()
+
+for (ii in 1:varCount) {
+  iiVar  <- params$racmoVars[ii]
+  iiType <- params$plotType[ii]
+  iiVarType <- paste(iiVar, iiType, sep = "_")
+  
+  if (iiType %in% c("mean", "stdev")) {
+    nameList[[iiVarType]] <- prep_racmo_names(racmoVars = iiVar,
+                                              monthlyData = TRUE,
+                                              originalUnits = FALSE)
+  } else if (iiType == "koral") {
+    nameList[[iiVarType]] <- prep_racmo_names(racmoVars = iiVar, 
+                                              before = "SAM  -", 
+                                              # after = "Correlation", 
+                                              originalUnits = NULL)
+  } else {
+    stop("set params plotType as 'mean', 'stdev' or 'koral'")
+  }
+}
+```
+
+## Define functions
+```{r}
+##
+add_koral_bounds <- function() {
+    abline(h = c(-0.3246, -0.4182, 0.3246, 0.4182),
+           lty = c(2, 3), col = kulaL(7, 9))
+    polygon(c(1, 120, 120, 1), 
+            c(-0.3246, -0.3246, 0.3246, 0.3246),
+            col = kulaL(3, 5), border = NA)
+    polygon(c(1, 120, 120, 1), 
+            c(-0.4182, -0.4182, 0.4182, 0.4182),
+            col = kulaL(3, 2), border = NA)
+}
+
+##
+plot_it <- function(iiData, iiType, ii, iiName) {
+  # Prepping -------------------------------------------------------------------
+  # y-axes
+  if (iiType == "koral") {
+    yyRange    <- c(-1, 1)
+    yyInterval <- 0.1
+  } else {
+    yyInfo  <- kulaR::get_kulaInfo(iiData)
+    yyRange <- yyInfo$zRange
+    yyInterval <- yyInfo$zIncrements
+  }
+  
+  # Alternate sides
+  if ((ii %% 2) == 1) {
+    yySide <- 2
+    yOffset <- 2.75
+  } else {
+    yySide <- 4
+    yOffset <- 2
+  }
+  
+  # x-axes - which rows to plot? (i.e. which dates? not start or end)
+  incRows <- which(rownames(iiData) %in% ndjfDates)
+  
+  # only add dates to the bottom plot
+  xxLabels <- rep("", length(ndjfDates))
+  if (ii == varCount) xxLabels <- ndjfDates 
+    
+  # The last plot margins differ at the bottom
+  if (ii != varCount) {
+    iiMar <- c(0.5, 4.25, 0.35, 3.5)
+  } else {
+    iiMar <- c(1.5, 4.25, 0.35, 3.5)
+  }
+  
+  # Plotting -------------------------------------------------------------------
+  figuR::pre_plot(xLimits = c(1, length(incRows)), yLimits = yyRange,
+                  mar = iiMar,
+                  yAxisSide = yySide, yTickBoth = TRUE,
+                  yName = iiName, 
+                  yNameCex = 1.1, yNameOffset = yOffset,
+                  yLabelCex = 0.85,
+                  
+                  xLabelEvery = 10, xLabels = xxLabels,
+                  xLabelFirst = 1, xLabelSrt = -10, xLabelCex = 0.8,
+                  
+                  tagText = paste0(letters[ii], ")"),
+                  tagCex = 1.5)
+  
+  # Monthly delineations
+  abline(v = c(31, 62, 91), col = kulaL(4))
+  
+  # Statistical significance lines/shaded polygon for correlation plots
+  if (iiType == "koral") {
+    add_koral_bounds()
+  }
+  
+  # Plot the data! -------------------------------------------------------------
+  for (jj in names(iiData)) {
+    jjKula <- kulaN[which(names(iiData) == jj)]
+    jjData <- iiData[[jj]]
+    lines(seq_along(incRows), jjData[incRows],
+          col = jjKula, lwd = 3)
+  }
+  
+  # Decoration on top ----------------------------------------------------------
+  figuR::add_plot_frame()
+  
+  # Add a legend to the last panel
+  if (ii == 1) {
+    # Legend
+    legend("bottomleft", text.width = NA,
+           inset = c(0.005, 0.02),
+           c("Weddell", "Dronning Maud Land", "Amery", "Wilkes"), 
+           bg = "white",
+           col = kulaN[1:ncol(iiData)], 
+           lwd = 3, horiz = TRUE, cex = 0.82)
+  }
+}
+```
+ 
+# Plot =========================================================================
+```{r}
+# PDF Set-Up
+if (!exists("vv")) vv <- 0
+vv <- vv + 1
+
+fileName <- paste0(figPath, "fig", params$figName,
+                   "v", sprintf("%02d", vv), 
+                   "_dailyPlots.pdf")
+
+pdf(fileName, height = 2.5 * varCount, width = 9)
+par(mfrow = c(varCount, 1), cex = 1)
+
+for (ii in 1:varCount) {
+  iiType <- params$plotType[[ii]]
+  iiVar  <- params$racmoVars[[ii]]
+  iiVarType <- paste(iiVar, iiType, sep = "_")
+  iiName <- nameList[[iiVarType]]
+  iiData <- kubud[[iiVar]][[iiType]]
+  plot_it(iiData, iiType, ii, iiName)
+}
+```

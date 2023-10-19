@@ -1,0 +1,679 @@
+---
+title: an02_create_figure_2.qmd
+abstract: |
+  The purpose of this notebook is to create Figure 2 in the GRL manuscript.
+  There are 5 panels in Figure 2.
+      panel a) Interannual variability in ENSO
+      panel b) Interannual variability in SAM
+      panel c) Spatiotemporal variability in summer melt fluxes (as percentiles)
+      panel d) running, EA-wide SAM-melt correlations
+      panel e) shelf-based SAM-melt correlations
+  !! The melt data must have already been prepared in dt02.
+  !! The correlation plots use both the NOAA CPC and Marshall 2003 SAM indices.
+---
+
+# Data Prep & Set-Up
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Load RACMO Data
+Requires the output from dt02, which is an R list serialised as json.
+```{r}
+# Read in data
+meltData <- domR::read_list("Data/shelfwide_mean/racmoM_shelfwide_mean_snowmelt-dt02.json")
+
+# Calculate % of total melt that occurs in the peak months (i.e. DJ)
+ndjf <- meltData$shelfwide_melt$NDJF
+ndjf <- ndjf[which(names(ndjf) != "EA-Wide")]
+dj   <- meltData$shelfwide_melt$DJ
+dj   <- dj[which(names(dj) != "EA-Wide")]
+peak <- ((dj / ndjf) * 100) |> round(1)
+```
+
+## Prepare Melt Percentile Data (for plot c)
+We'll plot the data as percentiles to help compare between shelves in a summer.
+The percentiles indicate how many summers are at or below the percentile value.
+We plot the min, max and median as the 0, 100 and 50th percentiles.
+The others will then be plotted between them.
+
+```{r}
+zDJ <- dj * NA
+probs <- c(0, 5, 10, 25, 50, 75, 90, 95, 100)
+
+for (ii in 1:ncol(zDJ)) {
+  iiData   <- dj[, ii]
+  iiPtiles <- quantile(iiData, probs = probs / 100)
+  
+  zDJ[which(iiData == iiPtiles[["100%"]]), ii] <- 100  # =100
+  zDJ[which(iiData <  iiPtiles[["100%"]]), ii] <- 97.5 # >95 < 100
+  zDJ[which(iiData <= iiPtiles[["95%"]]), ii]  <- 92.5 # >90 <= 95
+  zDJ[which(iiData <= iiPtiles[["90%"]]), ii]  <- 82.5 # >75 <= 90
+  zDJ[which(iiData <= iiPtiles[["75%"]]), ii]  <- 62.5 # >50 <= 75
+  zDJ[which(iiData == iiPtiles[["50%"]]), ii]  <- 50   # =50
+  zDJ[which(iiData  < iiPtiles[["50%"]]), ii]  <- 37.5 # >25 <  50
+  zDJ[which(iiData <= iiPtiles[["25%"]]), ii]  <- 17.5 # >10 <= 25
+  zDJ[which(iiData <= iiPtiles[["10%"]]), ii]  <- 7.5  # > 5 <= 10
+  zDJ[which(iiData <= iiPtiles[["5%"]]), ii]   <- 2.5  # >0  <= 5
+  zDJ[which(iiData == iiPtiles[["0%"]]), ii]   <- 0    # =0
+}
+
+# This plot should help clarify what the percentiles are showing.
+figuR::plot_lines(sort(zDJ$Shackleton), 
+                  yName = "Percentile", yInterval = 5, 
+                  yLabelEvery = c(1, 2, 3, 6, 11, 16, 19, 20, 21),
+                  xName = "Ascending Values")
+```
+
+## Prepare Climate Indices (for panels a & b)
+These are for panels a) and b), showing the interannual variability in SAM and
+ENSO.
+The ENSO data is downloaded directly from psl.
+```{r}
+# ENSO - panel a
+enso <- align_enso_to_summers(australSplit = 3) |>
+  domR::sift("Summer in 1980:2018")
+ensoStripe <- apply(enso[, c("Oct", "Nov", 
+                             "Dec", "Jan")], 1, mean) # ONDJ-average for ENSO
+```
+
+The SAM data should be on your machine; change the 'filePath' if necessary.
+```{r}
+# SAM - panel b
+noaa <- align_sam_to_summers(filePath = "noaa", australSplit = 3) |>
+  domR::sift("Summer in 1980:2018")
+noaaStripe <- apply(noaa[, c("Dec", "Jan")], 1, mean)   # DJ-average for SAM
+```
+
+The Marshall 2003 SAM data isn't shown as a stripe, but is used in panels d & e.
+```{r}
+mars <- align_sam_to_summers(filePath = "marshall") |>
+  domR::sift("Summer in 1980:2018")
+```
+
+# Prepare Correlation Data =====================================================
+## Shelfwide Correlations (for panel e) ----------------------------------------
+### Prep and preallocate
+```{r}
+# Preallocate to hold all the correlation values
+koral <- list()
+koral$noaa <- vector("list", length = 3) |>
+  `names<-`(c("DJ_DJ", "D_D", "J_J"))
+koral$mars <- koral$noaa
+
+# Preallocate matrices for 'r' estimates and p-values
+rpCubud <- matrix(NA, nrow = length(pToken$shelves), ncol = 2) |>
+  `colnames<-`(c("r", "p")) |>
+  `rownames<-`(pToken$shelves) |>
+  as.data.frame()
+
+# Define SAM periods
+samPeriods <- list(month.abb[c(12,  1)],
+                   month.abb[c(12, 12)], # x2 hack allows rowMeans in the loop
+                   month.abb[c( 1,  1)])
+
+# Define melt periods
+meltPeriods <- list("DJ", "Dec", "Jan")
+```
+
+### Calculate the shelf-wide correlations
+```{r}
+start <- domR::start_timer("Correlating SAM & Melt")
+for (ii in seq_along(samPeriods)) {
+  # Initialise a new rpCubud for each SAM-melt period
+  koral$noaa[[ii]] <- rpCubud
+  koral$mars[[ii]] <- rpCubud
+  
+  # Retrieve & detrend the necessary SAM data
+  iiNoaa <- noaa[, samPeriods[[ii]]] |> rowMeans() |> linear_detrend()
+  iiMars <- mars[, samPeriods[[ii]]] |> rowMeans() |> linear_detrend()
+  
+  iiMeltPeriod <- meltPeriods[[ii]] # requires samPeriods & meltPeriods to align
+
+  # Loop through shelves and calculate correlation
+  for (jj in pToken$shelves) {
+    # Retrieve & detrend the necessary shelf melt data
+    jjMelt <- meltData$shelfwide_melt[[iiMeltPeriod]][jj] |> unlist() |>
+      linear_detrend()
+    
+    # Correlations
+    # NOAA CPC SAM index
+    ijNoaaKaw <- cor.test(iiNoaa, jjMelt, method = "pearson")
+    koral$noaa[[ii]][jj, "r"] <- ijNoaaKaw$estimate |> round(3) |> unname()
+    koral$noaa[[ii]][jj, "p"] <- ijNoaaKaw$p.value  |> round(3) |> unname()
+    
+    # Marshall 2003 SAM index
+    ijMarsKaw <- cor.test(iiMars, jjMelt, method = "pearson")
+    koral$mars[[ii]][jj, "r"] <- ijMarsKaw$estimate |> round(3) |> unname()
+    koral$mars[[ii]][jj, "p"] <- ijMarsKaw$p.value  |> round(3) |> unname()
+  }
+}
+end <- domR::end_timer(start)
+```
+
+## Calculate 11-Year Running Correlation for EA-wide melt (for panel d) --------
+### Prep and preallocate
+```{r}
+# Preallocate matrices for 'r' estimates and p-values
+east11 <- matrix(NA, nrow = 39, ncol = 4) |>
+  `colnames<-`(c("noaa_r", "noaa_p", "mars_r", "mars_p")) |>
+  `rownames<-`(1980:2018)
+
+# Each of the meltPeriods will ahve a separate matrix
+koral$east11 <- rep(list(east11), length(meltPeriods)) |>
+  `names<-`(unlist(meltPeriods))
+
+# Prep for running values
+runLength <- 11  # 11 years is based on Fig. 4 of Marshall et al. (2013)
+runStart  <- (runLength + 1) / 2   # where does the window start?
+runRange  <- (runLength - 1) / 2   # for the window either side
+```
+
+### Calculate Correlations
+```{r}
+# Loop through each melt period
+start <- domR::start_timer("Correlating running values")
+for (ii in seq_along(meltPeriods)) {
+  iiSamPeriod  <- samPeriods[[ii]]
+  iiMeltPeriod <- meltPeriods[[ii]]
+  
+  iiNoaa <- noaa[, iiSamPeriod] |> rowMeans() |> unlist()
+  iiMars <- mars[, iiSamPeriod] |> rowMeans() |> unlist()
+  iiMelt <- meltData$shelfwide_melt[[iiMeltPeriod]][["EA-Wide"]] 
+  
+  # Loop through the running window periods
+  for (jj in runStart:(39 - runRange)) {
+    # Where is this window?
+    jjStart <- jj - runRange
+    jjEnd   <- jj + runRange
+    
+    # Subset to the run window & detrend
+    jjNoaa <- iiNoaa[jjStart:jjEnd] |> linear_detrend()
+    jjMars <- iiMars[jjStart:jjEnd] |> linear_detrend()
+    jjMelt <- iiMelt[jjStart:jjEnd] |> linear_detrend()
+    
+    # Correlate
+    noaaKaw <- cor.test(jjNoaa, jjMelt, method = "pearson")
+    marsKaw <- cor.test(jjMars, jjMelt, method = "pearson")
+    
+    # Store beyond the loop
+    koral$east11[[ii]][jj, "noaa_r"] <- noaaKaw$estimate |> round(3)
+    koral$east11[[ii]][jj, "noaa_p"] <- noaaKaw$p.value  |> round(3)
+    koral$east11[[ii]][jj, "mars_r"] <- marsKaw$estimate |> round(3)
+    koral$east11[[ii]][jj, "mars_p"] <- marsKaw$p.value  |> round(3)
+  }
+}
+end <- domR::end_timer(start)
+```
+
+# Plot Prep ====================================================================
+These plots and panels require quite a bit of preparation for the data, as well 
+as the plot customisation and alignment.
+
+## Prepare layout
+```{r}
+panels <- figuR::arrange_panels(list(c(1, 4, 1, 73),         # panel a
+                                     c(5, 8, 1, 73),         # panel b
+                                     c(9, 82, 1, 73),        # panel c
+                                     c(83, 100, 1, 73),      # panel d
+                                     c(9, 82, 74, 100),      # panel e
+                                     c(83, 100, 74, 86),     # Legend
+                                     c(83, 100, 87, 93),     # colours 1
+                                     c(83, 100, 94, 100),    # colours 2
+                                     c(1, 8, 74, 100)))      # arrow up
+layout.show(9)
+```
+
+## Prep data for panels a and b
+```{r}
+# Transpose climate stripes, to run with time vertically upwards
+noaaStripeT <- matrix(noaaStripe) |> t()
+ensoStripeT <- matrix(ensoStripe) |> t()
+
+klimaKulas <- kulaR::kulaK("bam", 14, skipMid = 2,
+                           reverse = TRUE, include = 3:12)
+```
+
+## Prep data for panel c
+```{r}
+# Transpose & mirror melt matrices
+# We want shelves running west-to-east left-to-right, and time to be vertical
+zMelt <- as.matrix(zDJ)  |> t() |> domR::mirror_matrix_vertically()
+zPeak <- as.matrix(peak) |> t() |> domR::mirror_matrix_vertically()
+
+# Melt kulas
+meltKulas <- kulaR::kulaD(13, include = c(1:5, 7, 9:13)) # middle white = median
+
+# However, for the kulaBar, we don't want it to be equidistant
+# The width of the sections approximates the frequency of them.
+# We therefore need to include the same colours multiple times in the bar.
+kBarInclude <- c(rep(1, 1),    #     0
+                 rep(2, 1),    #   2.5; >  0 <   5
+                 rep(3, 2),    #   7.5; >  5 <= 10
+                 rep(4, 6),    #  12.5; > 10 <= 25
+                 rep(5, 9),    #  37.5; > 25 <  50
+                 rep(7, 1),    #  50  ; = 50
+                 rep(9, 9),    #  62.5; > 50 <= 75
+                 rep(10, 6),   #  82.5; > 75 <= 90
+                 rep(11, 2),   #  92.5; > 90 <= 95
+                 rep(12, 1),   #  97.5; > 95 < 100
+                 rep(13, 1))   # 100  ; =100
+mBarKulas <- kulaR::kulaD(13, include = kBarInclude)
+```
+
+# Panel Functions ==============================================================
+We'll do the panels as a series of functions to keep things a little neater.
+
+## Panel a
+```{r}
+plot_panel_a <- function() {
+  figuR::plot_matrix(x = ensoStripeT,
+                     kulas = klimaKulas,
+                     range = c(-2.5, 2.5),
+                     mar   = c(0.2, 0.5, 0.25, 0.25),
+                     yAlignMidPoints  = TRUE,
+                     yLabels = 1980:2018,
+                     yLabelEvery = 5, labelFirst = 1,
+                     xLabels = c("", ""), xTickLength = 0,
+                     yTickLength = 0.2)
+  figuR::add_plot_frame()
+  text(0.5, y = 0.992, labels = "a)", cex = 1.5, adj = c(0.5, 0.5))
+}
+plot_panel_a()
+```
+
+## Panel b
+```{r}
+plot_panel_b <- function() {
+  figuR::plot_matrix(x = noaaStripeT,
+                     kulas = klimaKulas,
+                     range = c(-2.5, 2.5),
+                     mar   = c(0.2, 0.5, 0.25, 0.25),
+                     yAlignMidPoints  = TRUE, yAxisSide = 4,
+                     yLabels = 1980:2018, yLabelCex = 1,
+                     yLabelEvery = 5, labelFirst = 1,
+                     xLabels = c("", ""),
+                     xTickLength = 0,
+                     yTickLength = 0.2)
+  figuR::add_plot_frame()
+  text(0.5, y = 0.992, labels = "b)", cex = 1.5, adj = c(0.5, 0.5))
+}
+plot_panel_b()
+```
+## Panel c
+```{r}
+plot_panel_c <- function() {
+  tt <- figuR::plot_matrix(zMelt, 
+                           kulas = meltKulas,
+                           breaks = c(0, 1, 5, 10, 25, 49.99, 50.01,
+                                      75, 90, 95, 99, 100), 
+                     
+                           mar = c(0.2, 2.5, 0.25, 0.25),
+                           yTickBoth = TRUE, 
+                           yLabels = 1980:2018, yLabelFirst = 1, yLabelEvery = 5,
+                           yAlignMidPoints = TRUE,
+                     
+                           xLabels = pToken$initials, xAlignMidPoints = TRUE,
+                           xLabelEvery = 1, xLabelSrt = 270, xLabelOffset = 1,
+                     
+                           xMarks = c(2, 12, 13, 20, 24),
+                           yMarks = seq(1, 39, 5),
+                           xMarkOffset = 0.5, 
+                           xyGuides = "x")
+  figuR::add_plot_frame()
+  
+  # Add crosses to indicate when 95% of summer melt occurs in DJ ---------------
+  x1 <- tt$xTicks[[1]]
+  y1 <- tt$yTicks[[1]]
+  
+  x95 <- matrix(rep(x1, times = 39), ncol = 39, nrow = 27)
+  y95 <- matrix(rep(y1, each = 27), ncol = 39, nrow = 27)
+  
+  x95[zPeak < 95] <- NA
+  y95[zPeak < 95] <- NA
+  
+  # Add the points
+  points(x = x95, y = y95, pch = 4, cex = 0.5, col = kulaR::kulaT(4, 4))
+  
+  # panel ID
+  text(x = 0.0015, y = 0.992, "c)", cex = 1.5, adj  = c(0.5, 0.5))
+}
+plot_panel_c()
+```
+
+## Panel d
+This does not look like it aligns well here, but it does in the pdf output.
+```{r}
+plot_panel_d <- function() {
+  # The plot ----
+  figuR::pre_plot(xLimits = c(0.35, -1), 
+                  xInterval = -0.05, 
+                  xLabelEvery = c(3, 8, 13, 18, 23, 28),  # 
+                  xLabelSrt = 0, xLabelCex = 0.88, xLabelKula = "white",
+  
+                  yLimits = c(1979.5, 2018.5),
+                  yAlignMidPoints = TRUE,
+                  yTickBoth = TRUE,
+                  yLabels = 1980:2018, yLabelKula = "white",
+                  yLabelFirst = 1, yLabelEvery = 5,
+                  
+                  tagText = "d)", tagLocation = c(0.2, 2017.5), tagCex = 1.5,
+                  
+                  originLwd = 1.25, originKula = "black",
+                  
+                  mar = c(0.2, 1, 0.25, 0.5))
+  
+  # Add critical values for correlations (w/ 9 dof) ----------------------------
+  text("p  =  0.05", x = -0.602, y = 1984.3, adj = c(0, 0.5),
+       cex = 0.9 ,col = kulaR::kulaL(7), srt = 270)
+  lines(x = c(-0.602, -0.602), y = c(1984.75, 2013.25), 
+        col = kulaR::kulaL(7), lty = 2)  # not using abline as not all the way
+  
+  text("p  =  0.01", x = -0.735, y = 1984.3, adj = c(0, 0.5),
+       cex = 0.9 ,col = kulaR::kulaL(7), srt = 270)
+  lines(x = c(-0.735, -0.735), y = c(1984.75, 2013.25), 
+        col = kulaR::kulaL(9), lty = 3)  # not using abline as not all the way
+  
+  # Explainer Arrows -----------------------------------------------------------
+  # Just to help the reader understand quickly without the caption
+  # Background box to make text legible
+  rect(0.35, 1979.5, -0.2, 1982.5,  col = kulaR::kulaL(1), border = NA)
+  rect(0.35, 1979.5, -1,   1980.75, col = kulaR::kulaL(1), border = NA)
+  legend(x = 0.5, y = 1979.5, 
+         c("Stronger", "Negative", "Correlation"),
+         box.col = NA, bg = NA, 
+         cex = 0.9, xjust = 0, yjust = 0)
+  arrows(x0 = -0.3,   y0 = 1980.15,
+         x1 = -0.925, y1 = 1980.15,
+         lwd = 2, xpd = TRUE, length = 0.1)  # length of the arrow head
+
+  # Separation of running and overall correlations -----------------------------
+  abline(h = 2015, col = "black", lwd = 5)
+  
+  # for a label on the 11-year running side
+  rect(-0.5, 2013.65, -1, 2014.8, 
+       col = kulaR::kulaL(1), border = NA)
+  legend(x = -1, y = 2015, 
+         "Running", 
+         box.col = NA, bg = NA, 
+         cex = 0.9, xjust = 1, yjust = 1)
+  
+  # for a label on the overall (i.e. full 39-year record) side
+  rect(-0.55, 2015.2, -1, 2016.35,
+       col = kulaR::kulaL(1), border = NA)
+  legend(x = -1, y = 2015, 
+         "Overall", 
+         box.col = NA, bg = NA, 
+         cex = 0.9, xjust = 1, yjust = 0)
+  
+  # Plot the data! =============================================================
+  for (ii in 1:3) {
+    # Grab data for this period
+    iiMeltPeriod <- meltPeriods[[ii]]
+    iiValues     <- cbind(koral$east11[[iiMeltPeriod]][, "noaa_r"],
+                          koral$east11[[iiMeltPeriod]][, "mars_r"])
+    
+    # Create the necessary structure for a polygon
+    # The shaded area clearly shows the difference between NOAA & Marshall SAM
+    iiBox   <- c(apply(iiValues, 1, max),            # create y value pairs by
+                 rev(apply(iiValues, 1, min)))       #   identifying min & max
+    iiBox   <- iiBox[c(6:34, 45:73)]        # ignore NA (window is incomplete)
+    iiDates <- c(1980:2018)[c(6:34, 34:6)]  # the years
+    
+    # Add the data
+    polygon(x = iiBox, y = iiDates,
+            col = kulaR::kulaQ3(ii, opacity = 1), 
+            border = NA, lwd = 2)
+    lines(x = iiValues[, 1],  y = 1980:2018,
+          lwd = 2, col = kulaR::kulaQ3(ii, opacity = 6))     # NOAA
+    lines(x = iiValues[, 2],  y = 1980:2018,
+          lwd = 1, col = kulaR::kulaQ3(ii, opacity = 3))     # Marshall
+    
+    # Crosses for the full correlation
+    # Calculate
+    iiSamPeriod <- samPeriods[[ii]]
+    iiMeltData  <- meltData$shelfwide_melt[[iiMeltPeriod]]$`EA-Wide`
+    iiNoaaData  <- rowMeans(noaa[, iiSamPeriod])
+    iiMarsData  <- rowMeans(mars[, iiSamPeriod])
+    fullNoaa <- cor.test(iiMeltData, iiNoaaData, method = "pearson")$estimate
+    fullMars <- cor.test(iiMeltData, iiMarsData, method = "pearson")$estimate
+    
+    # Plot
+    points(fullNoaa, 2017.5, pch = 4, cex = 2, lwd = 3, 
+           col = kulaR::kulaQ3(ii, opacity = 8))
+    points(fullMars, 2017.5, pch = 4, cex = 2, lwd = 2, 
+           col = kulaR::kulaQ3(ii, opacity = 4))
+  }
+  figuR::add_plot_frame()
+}
+
+layout(panels)
+pre_plot(1:10, 1:10, mar = c(0,0,0,0))
+plot(1:10, mar = c(0,0,0,0))
+plot(1:10, mar = c(0.2,0,0.25,0))
+plot_panel_d()
+```
+
+## Panel e
+```{r}
+plot_panel_e <- function(){
+  # prep -----------------------------------------------------------------------
+  figuR::pre_plot(mar = c(0.35, 2.55, 2, 0.25),
+                  
+                  xLimits = c(0.5, 27.5), xAlignMidPoints = TRUE, xAxisSide = 3, 
+                  xLabels = pToken$initials, xLabelEvery = 1,
+                  xLabelKula = kulaR::kulaL(4), xLabelCex = 0.88, 
+                  xLabelOffset = 1.05,
+                  xLabelSrt = 270,
+                  xTickBoth = FALSE, xTickLength = 0.15,
+                  
+                  yLimits = c(0.1, -0.9), yAxisSide = 2, 
+                  yInterval = -0.1, 
+                  yLabelFirst = 2, yLabelEvery = 2,
+                  
+                  tagText = "e)", tagLocation = c(1.2, -0.82), tagCex = 1.5,
+                  
+                  gridKula = kulaR::kulaL(1),
+                  
+                  originLwd = 1.25, originKula = "black")
+  
+  # Add vertical lines to delineate the regions --------------------------------
+  figuR::add_axis(1, 
+                  meshlines = length(pToken$initials) + 1,
+                  alignMidPoints = FALSE, 
+                  labelEvery = c(3, 13, 14, 21, 25, 28), 
+                  labelKula = "#000000", tickLength = 0,
+                  gridKula = "black", gridLwd = 1)
+  lines(x = c(6.5, 6.5), c(0, -0.9),              # semi-delineation for DML
+        col = kulaR::kulaL(4))  
+  
+  # Add critical r values (at p = 0.05 & = 0.01 for 37 df) ---------------------
+  abline(h = c(-0.3246, -0.4182),
+         lty = c(2, 3), col = kulaR::kulaL(7, 9))
+  text(x = c(27.4, 27.4), y = c(-0.4182, -0.3246) * 1.05,
+       labels = c("p  =  0.01",
+                  "p  =  0.05"),
+       cex = 0.9, col = kulaL(6), adj = c(1, 0))
+       
+  # Plot the data! -------------------------------------------------------------
+  for (ii in 1:3) {
+    # Grab the necessary data
+    iiNoaa_r <- koral$noaa[[ii]]$r
+    iiMars_r <- koral$mars[[ii]]$r
+    iiValues <- cbind(iiNoaa_r, iiMars_r)
+    
+    # Create the necessary structure for a polygon
+    # The shaded area clearly shows the difference between NOAA & Marshall SAM
+    iiBox     <- c(apply(iiValues, 1, max),            # create y value pairs by
+                   rev(apply(iiValues, 1, min)))       #   identifying min & max
+    xShelves  <- seq_along(pToken$shelves)
+    iiShelves <- c(xShelves, rev(xShelves))
+  
+    # Add the data
+    polygon(x = iiShelves, y = iiBox,
+              col = kulaR::kulaQ3(ii, opacity = 1), 
+              border = NA, lwd = 2)
+    lines(x = xShelves, y = iiNoaa_r,
+          lwd = 2, col = kulaR::kulaQ3(ii, opacity = 6))     # NOAA
+    lines(x = xShelves, y = iiMars_r,
+          lwd = 1, col = kulaR::kulaQ3(ii, opacity = 3))     # Marshall
+    }
+    # Add region names to the plot ---------------------------------------------
+    text(x = c(1.5, 7.5, 13, 17, 22.5, 26),
+         y = 0.055, 
+         labels = c("Weddell", "Dronning Maud Land", "Am.",
+                    "Wilkes Land", "Oates-George V", "Ross"),
+         col = kulaR::kulaL(4), cex = 0.8)
+}
+
+layout(panels)
+pre_plot(1:10, 1:10, mar = c(0,0,0,0))
+plot(1:10, mar = c(0.2,0,0.25,0))
+plot(1:10, mar = c(0,2.75, 0, 0.25))
+plot(1:10, mar = c(0,0,0,0))
+plot_panel_e()
+```
+
+## Legend panels
+```{r}
+plot_legends <- function() {
+  # This top is actually the labels for the running correlation (panel d).
+  figuR::pre_plot(mar = c(0, 1, 1.5, 0.5), 
+                  
+                  xLimits = c(0.35, -1), xInterval = -0.05, xAxisSide = 3,
+                  xLabelEvery = c(8, 18, 28), 
+                  xLabelKula = kulaR::kulaL(5),
+    
+                  yLimits = c(-10, 10), 
+                  yLabelKula = "white", yTickLength = 0,
+                  
+                  # transparent / white to hide
+                  addOrigin = FALSE,
+                  tickKula = kulaR::kulaT(0),
+                  gridKula = kulaR::kulaT(0), 
+                  axisKula = "white")
+  
+  # Name for the axis
+  text(x = -0.325, y = 5.25,
+       "SAM-Surface Melt \n Correlations",
+       adj = c(0.5, 0.5), cex = 1)
+  
+  # Legend for the SAM index
+  legend("top",
+         inset  = c(0, 0.45),
+         legend = c("", "NOAA", "Marshall", ""),
+         horiz = TRUE,
+         box.col = kulaR::kulaL(6),
+         bg = "white", text.width = 0.25,
+         cex = 0.7,
+         lwd = c(0, 3, 2, 0),
+         col = c(kulaR::kulaL(1, 0),
+                 kulaR::kulaQ(7, opacity = 8),
+                 kulaR::kulaQ(7, opacity = 5),
+                 kulaR::kulaL(1, 0)))
+  
+  # Legend for the correlation period
+  legend("top", 
+         inset   = c(0, 0.65),
+         legend  = c("DJ", "Dec", "Jan"),
+         horiz   = TRUE,
+         box.col = kulaR::kulaL(6),
+         bg  = "white", 
+         cex = 0.7,
+         lwd = 3,
+         col = kulaR::kulaK("highcontrast", 3))
+}
+
+# layout(panels)
+# pre_plot(1:10, 1:10, mar = c(0,0,0,0))
+# plot(1:10, mar = c(0.2,0,0.25,0))
+# plot(1:10, mar = c(0,2.75, 0, 0.25))
+# plot(1:10, mar = c(0,0,0,0))
+# plot(1:10, mar = c(0,0,0,0))
+plot_legends()
+```
+
+## kulaBar panels
+```{r}
+plot_kulaBars <- function() {
+  # Climate Indices
+  kulaR::add_kulaBar(kula = klimaKulas, 
+                     range = c(-2.5, 2.5),
+                     mar = c(2, 1, 1, 0.5), 
+                     name = "Climate Indices",
+                     nameSide = 3, nameOffset = 0.5,
+                     nameCex = 1,
+                     labelEvery = 2, labelFirst = 2,
+                     labelCex = 0.85, labelOffset = 0.5)
+  
+  # Prepare the labels first as this is not straightforward
+  kLabels <- rep("", 79)
+  toTick <- c(1, 3, 5, 9, 21, 40, 59, 71, 75, 77, 79)
+  # kLabels[toTick] <- c(0, 1, 5, 10, 25, 50, 75, 90, 95, 99, 100) # all
+  kLabels[toTick] <- c(0, "", "", 10, 25, 50, 75, 90, "", "", 100) # on the plot
+  
+  # Melt Percentiles
+  kulaR::add_kulaBar(kula = mBarKulas,     # this is a trick for uneven bars
+                     range = c(1, 79),     # 79 allows centred median (39 + 39 + 1)
+                     labels = kLabels,
+                     labelEvery = 1, 
+                     tickEvery = toTick,
+                     labelCex = 0.75,
+                     labelOffset = 0.6,
+
+                     mar = c(2, 1, 1, 0.5), 
+                     name = "Melt Percentiles",
+                     nameOffset = 0.5,
+                     nameSide = 3)
+}  
+par(mfrow = c(2, 1))
+plot_kulaBars()
+```
+
+## Annotation panel
+```{r}
+plot_bottom_left <- function() {
+  # create a dummy plot area to help alignment
+  figuR::pre_plot(xLimits = c(-10, 10), yLimits = c(0.1, -0.9),
+                  mar = c(0.35, 0, 2, 0),
+                  addOrigin = FALSE,
+                  gridKula = kulaR::kulaT(0),
+                  axisKula = "white",
+                  tickKula = kulaR::kulaT(0))
+  arrows(x0 = 7.5, y0 = -0.05, 
+         x1 = 7.5, y1 = -0.825,
+         lwd = 2, xpd = TRUE)
+  text(x = 1, y = -0.4, "Stronger Negative\n SAM-Melt Correlation", 
+     xpd = TRUE, cex = 1, srt = 90)
+  
+  text(x = -4.5, y = -1, xpd = TRUE, labels = "ENSO", cex = 0.9)
+  text(x =  5.5, y = -1, xpd = TRUE, labels = "SAM", cex = 0.9)
+}
+plot_bottom_left()
+```
+
+# Plot as PDF ==================================================================
+```{r}
+if (!exists("vv")) vv <- 0
+vv <- vv + 1
+
+pdf(paste0(figPath, "fig02v", sprintf("%02d", vv), "_stripeCorrelations.pdf"), 
+    width = 12, height = 12)
+
+# arrange
+layout(panels)
+par(cex = 1)
+
+# plot the panels!
+plot_panel_a()
+plot_panel_b()
+plot_panel_c()
+plot_panel_d()
+plot_panel_e()
+plot_legends()
+plot_kulaBars()
+plot_bottom_left()
+
+domR::cat_list(domR::get_metadata())
+```

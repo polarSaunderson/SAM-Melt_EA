@@ -1,0 +1,167 @@
+---
+title: dt03_calculate_AMSR_melt_duration.qmd
+abstract: |
+  The purpose of this notebook is to create monthly maps of satellite-observed 
+  melt duration (i.e. number of melt days each month).
+  
+  We use the daily AMSR datasets from Picard (2022), with a spatial resolution 
+  of 12.5 km, and available from 2002/03--2020/21.
+  We simply read the melt data (binary melt / no-melt flags) for a single month, 
+  and then sum the number of melt days for each pixel in that month each summer 
+  before saving it all as a NetCDF.
+  The output is therefore a NetCDF that contains the melt duration for every 
+  (e.g.) December, with each layer storing the (e.g.) December melt duration for
+  a single summer.
+  
+  !! You must download the AMSR datasets first, available here:
+    https://doi.org/10.18709/PERSCIDO.2022.09.DS376
+  
+  !! Set the relative path to the AMSR data folder from your current working 
+  directory
+params:
+  month: Dec
+  amsrPath: "../../Data/PicardMelt/melt-AMSR-Antarctic/"
+---
+
+# Data Prep & Set-Up ===========================================================
+```{r}
+domR::fresh("")
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Read AMSR Data
+```{r}
+# AMSR Data (12.5km, summers 2002/03--2020/21)
+amsreFile <- paste0(params$amsrPath, "CumJour-amsre-2002-2011-H19.nc")
+amsr2File <- paste0(params$amsrPath, "CumJour-amsr2-2012-2021-H19.nc")
+
+# Read in data
+amsr  <- terra::sds(c(amsreFile, amsr2File)) |> terra::rast()
+
+# `terra` doesn't find an ext & crs here.
+# The crs part is just considered missing but the ext part throws a warning
+# that we can ignore because we manually add the crs & ext to the data here:
+terra::crs(amsr) <- "EPSG:3031" 
+terra::ext(amsr) <- terra::ext(c(-2981250, 2793750, -2393750, 2631250))
+
+# On the README file from the AMSR dataset download page, it states the grids
+# are EPSG:3413, but that is for the Northern Stereographic grid. They are 
+# actually on the EPSG:3031 grid for the Southern Hemisphere.
+
+# Verify that the data lines up
+tstImage <- terra::subset(amsr, 300) # a day in the 1st melt season (2003-01-25)
+terra::plot(tstImage)
+polarcm::draw_antarctica(crs = "EPSG:3031")
+
+# Usually the data is upside down (but occasionally it appears correctly...)
+```
+
+## If upside-down...
+- Even if the data is upside down, we don't need to flip all of it.
+- Flipping takes a long time, and is unnecessary for what we are doing here.
+- We're just summing the binary values for each pixel, so it doesn't matter if
+  they're all upside down or not. It is easier and quicker to sum the pixels 
+  whichever way up they appear, and then flip the summed data with far fewer 
+  layers.
+- However, we will run this chunk that flips a single layer just to verify that 
+  the alignment is correct.
+```{r}
+amsrFlip <- terra::flip(tstImage, direction = "vertical")
+terra::plot(amsrFlip)
+polarcm::draw_antarctica(crs = "EPSG:3031")
+```
+
+# Count melt days each summer ==================================================
+## Prep
+```{r}
+# Prep data - we only want data for a single month (too slow otherwise)
+subMonth  <- handle_months(params$month)
+xData     <- terrapin::subset_by_month(x = amsr, months = subMonth,
+                                       excludeIncomplete = 3, 
+                                       dailyResolution = TRUE) # monthly subset
+xSummers  <- terrapin::get_date_info(xData)$summer |> unique() # list of summers
+xList     <- list()
+```
+
+## Count
+This can take up to 5-10 minutes for a single month, depending on the machine.
+```{r}
+# Loop through each summer
+start <- domR::start_timer("Counting melt days in", params$month)
+for (ii in xSummers) {
+  # Subset for the correct summer
+  iiData <- terrapin::subset_by_summer(x = xData, summers = ii, 
+                                       australSplit = 3)
+  
+  # Ignore pixels beyond the melt area (indicated by a value of 246)
+  iiData[iiData == 246] <- NA
+  
+  # Sum the remaining values for the duration (0 = dry day, 1 = wet day)
+  iiSum <- sum(iiData, na.rm = TRUE)
+  
+  # Store outside the loop
+  xList[[as.character(ii)]] <- iiSum
+}
+end <- domR::end_timer(start, paste(params$month, "melt days"))
+
+# Combine all summers together for a single SpatRaster
+# Each layer is a different summer
+xDuration <- terra::rast(xList)
+```
+
+# Save =========================================================================
+## Prepare & metadata
+!! Check whether the data needs to be flipped or not from the plot above. If 
+not, comment out the first line here, else leave as it is and flip the data.
+```{r}
+# Flip the raster (see above - usually the raster is upside down)
+xDuration <- terra::flip(xDuration)   # !! comment out if no need to flip !!
+
+# Add dates to the layers.
+# Even though we have based things on summer, we need to use the year here.
+# We will add the date as the year-month-15.
+years <- switch(terrapin::handle_months(params$month, "Jan"),
+                "Jan" = ,
+                "Feb" = ,
+                "Mar" = xSummers,
+                xSummers - 1)
+
+# Use a real date format for terra, not my string representations
+layerDates <- as.Date(paste0(years, "-", params$month, "-15"), "%Y-%b-%d")
+terra::time(xDuration) <- layerDates  
+```
+
+# Save as a NetCDF
+```{r}
+# Check & create directory
+dirName <- "Data/amsr_melt_duration/"
+if (!dir.exists(dirName)) dir.create(dirName)
+
+# File name
+fileName <- paste0(dirName, paste("amsr", params$month, 
+                                  "melt_duration-dt03.nc", sep = "_"))
+
+blurb <- paste("Sum of AMSR", params$month, "melt days in a summer. Original",
+               "melt data is a binary distinction between melt and non-melt",
+               "days from the Picard (2022) dataset available at:",
+               "doi.org/10.18709/PERSCIDO.2022.09.DS376.")
+
+# Save NetCDF
+# We add quite a lot of information here - earlier calls seem to get overridden
+terra::writeCDF(x = xDuration, 
+                filename  = fileName,
+                overwrite = TRUE,
+                var       = paste(params$month, "MeltDays", sep = "_"),
+                atts      = domR::get_metadata(format = "NetCDF",
+                                               blurb = blurb),
+                unit      = "# of days", 
+                longname  = paste("Count of", params$month,
+                                  "AMSR melt days each summer"))
+domR::print_on_saving(fileName)
+```
+
+```{r}
+metaData <- get_metadata(blurb = blurb)
+domR::cat_list(metaData)
+```

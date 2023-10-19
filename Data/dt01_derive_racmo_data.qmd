@@ -1,0 +1,640 @@
+---
+title: dt01_derive_racmo_data.qmd
+abstract: |
+  The purpose of this notebook is to derive RACMO variables from the raw input.
+  For example, the incoming and outgoing shortwave radiation are both available,
+  and these can be used to derive the surface albedo.
+  
+  The variables that can be derived are:
+    - seb       Net Surface Energy Balance = lwsd + swsd + senf + lwsu + swsu + 
+                                              latf + gbot 
+    - radi      Net radiative fluxes       = lwsd + swsd + lwsu + swsu
+    - turb      Net turbulent fluxes       = senf + latf
+    - swsn      Net shortwave radiation    = swsd + swsu
+    - lwsn      Net longwave radiation     = lwsd + lwsu
+    - albd      Surface Albedo             = swsu / swsd * -1
+    - w10m      Absolute wind speed        = sqrt((u10m^2) + (v10m^2))
+    
+  The output is saved as NetCDFs.
+  
+  Instructions:
+    1) Run all chunks down to line 88 (ie. those before "Create racmoM NetCDFs")
+    2) Run whichever chunks after that which you want the output from! All of 
+       the above 7 derived variables are used in the monthly plots in the GRL 
+       manuscript (or in the supplement).
+    3) The daily data can also be derived, but is much, much slower. It may also
+       require that each decade is run separately to prevent memory issues. See
+       the "Create racmoD NetCDFs" section (on line 339) for more detail on how
+       the daily data works.
+
+params:
+  version: rp3
+---
+
+# Data Prep & Set-Up
+```{r}
+## Run set-up scripts ---------------------------------------------------------!
+source("R/su01_set_up.R")
+```
+
+## Define useful local functions
+These are used for all of the variables so define them here first, just once.
+```{r}
+## Creating the NetCDFs is slow, so we don't want to do it if it is unnecessary.
+## If it already exists, a prompt appears to confirm whether the data should be
+## overwritten.
+guard_against_existing <- function(racmoVar = params$racmoVar, 
+                                   version  = params$version,
+                                   resolution = "monthly") {
+  existingVars <- switch(resolution, 
+                        "daily"   = polarcm::list_racmoD_variables(print = FALSE),
+                        "monthly" = polarcm::list_racmoM_variables(print = FALSE))
+  existingVars <- existingVars[[version]]
+
+  if (racmoVar %in% existingVars) {
+    cat("\n\n")
+    warning(paste(version, racmoVar, "data already exists!\n"))
+  
+    userAgrees <- askYesNo(msg = paste("Do you want to overwrite the existing", 
+                                       version,
+                                       racmoVar, "data?"), 
+                           default = FALSE)
+    if (isFALSE(userAgrees) | is.na(userAgrees)) {
+      warning("Data will NOT be overwritten.\n")
+      cat(paste("Existing", version, "variables:\n"), existingVars, "\n")
+    } else if (isTRUE(userAgrees)) {
+      warning(paste("Overwriting", version, racmoVar, "..."))
+    }
+    return(userAgrees)
+  }
+  return(TRUE)
+}
+
+## ----------------------------------------------------------------------------!
+create_new_racmoM_filename <- function(racmoVar) {
+  token <- polarcm::configure_polarcm()
+  
+  # Filename depends on whether the value is averaged (wind, albedo) or summed
+  if (racmoVar %in% c("w10m", "albd")) {
+    path <- token$varPaths$racmoM[[params$version]]$u10m
+    path <- gsub(pattern = "u10m", replacement = racmoVar, x = path)
+  } else {
+    path <- token$varPaths$racmoM[[params$version]]$snowmelt
+    path <- gsub(pattern = "snowmelt", replacement = racmoVar, x = path)
+  }
+  return(path)
+}
+```
+
+# Create racmoM NetCDFs ========================================================
+## Net Surface Energy Balance: seb ---------------------------------------------
+```{r}
+# Guard
+proceed <- guard_against_existing(racmoVar = "seb", version = params$version)
+if (!isTRUE(proceed)) {
+  cat('\nUse polarcm::read_racmoM("seb") to access this dataset \n')
+} 
+
+# Calculate seb if necessary
+if (isTRUE(proceed)) {
+  # Calculate seb values
+  start <- domR::start_timer("seb")
+  swsu  <- polarcm::read_racmoM("swsu", params$version)
+  swsd  <- polarcm::read_racmoM("swsd", params$version)
+  lwsu  <- polarcm::read_racmoM("lwsu", params$version)
+  lwsd  <- polarcm::read_racmoM("lwsd", params$version)
+  senf  <- polarcm::read_racmoM("senf", params$version)
+  latf  <- polarcm::read_racmoM("latf", params$version)
+  gbot  <- polarcm::read_racmoM("gbot", params$version)
+  seb   <- swsu + swsd + lwsu + lwsd + senf + latf + gbot
+  
+  # Metadata for the NetCDF
+  units     <- terra::units(swsu)
+  varNames  <- "seb"
+  longnames <- "Net Surface Energy Balance"
+  
+  # Save as a new NetCDF
+  filePath <- create_new_racmoM_filename("seb")
+  terra::writeCDF(x = seb, filename = filePath,
+                  overwrite = TRUE,
+                  unit      = units,
+                  varname   = varNames,
+                  longname  = longnames)
+
+  domR::print_on_saving(filePath)
+  end <- domR::end_timer(start, "seb")
+}
+```
+
+## Net Radiative Fluxes: radi --------------------------------------------------
+```{r}
+# Guard
+proceed <- guard_against_existing(racmoVar = "radi", version = params$version)
+if (!isTRUE(proceed)) {
+  cat('\nUse polarcm::read_racmoM("radi") to access this dataset\n')
+} 
+
+# Calculate radi if necessary
+if (isTRUE(proceed)) {
+  # Calculate radi values
+  start <- domR::start_timer("radi")
+  swsu  <- polarcm::read_racmoM("swsu", params$version)
+  swsd  <- polarcm::read_racmoM("swsd", params$version)
+  lwsu  <- polarcm::read_racmoM("lwsu", params$version)
+  lwsd  <- polarcm::read_racmoM("lwsd", params$version)
+  radi  <- swsu + swsd + lwsu + lwsd
+  
+  # Metadata for the NetCDF
+  units     <- terra::units(swsu)
+  varNames  <- "radi"
+  longnames <- "Net Radiation at the Surface (inc. Longwave & Shortwave)"
+  
+  # Save as a new NetCDF
+  filePath <- create_new_racmoM_filename("radi")
+  terra::writeCDF(x = radi, filename = filePath,
+                  overwrite = TRUE,
+                  unit      = units,
+                  varname   = varNames,
+                  longname  = longnames)
+  
+  domR::print_on_saving(filePath)
+  end <- domR::end_timer(start, "radi")
+}
+```
+
+## Net Turbulent Fluxes: turb --------------------------------------------------
+```{r}
+# Guard
+proceed <- guard_against_existing(racmoVar = "turb", version = params$version)
+if (!isTRUE(proceed)) {
+  cat('\nUse polarcm::read_racmoM("turb") to access this dataset\n')
+} 
+
+# Calculate turb if necessary
+if (isTRUE(proceed)) {
+  # Calculate turb values
+  start <- domR::start_timer("turb")
+  senf  <- polarcm::read_racmoM("senf", params$version)
+  latf  <- polarcm::read_racmoM("latf", params$version)
+  turb  <- senf + latf
+
+  # Metadata for the NetCDF
+  units     <- terra::units(senf)
+  varNames  <- "turb"
+  longnames <- "Net Turbulent Heat Flux at the Surface (inc. Latent & Sensible)"
+  
+  # Save as a new NetCDF
+  filePath <- create_new_racmoM_filename("turb")
+  terra::writeCDF(x = turb, filename = filePath,
+                  overwrite = TRUE,
+                  unit      = units,
+                  varname   = varNames,
+                  longname  = longnames)
+
+  domR::print_on_saving(filePath)
+  end <- domR::end_timer(start, "turb")
+}
+```
+
+## Net Shortwave Radiation: swsn -----------------------------------------------
+```{r}
+# Guard
+proceed <- guard_against_existing(racmoVar = "swsn", version = params$version)
+if (!isTRUE(proceed)) {
+  cat('\nUse polarcm::read_racmoM("swsn") to access this dataset\n')
+} 
+
+# Calculate swsn if necessary
+if (isTRUE(proceed)) {
+  # Calculate swsn values
+  start <- domR::start_timer("swsn")
+  swsd  <- polarcm::read_racmoM("swsd", params$version)
+  swsu  <- polarcm::read_racmoM("swsu", params$version)
+  swsn  <- swsd + swsu
+
+  # Metadata for the NetCDF
+  units     <- terra::units(swsd)
+  varNames  <- "swsn"
+  longnames <- "Net Shortwave Radiation at Surface (Incident + Reflected)"
+  
+  # Save as a new NetCDF
+  filePath <- create_new_racmoM_filename("swsn")
+  terra::writeCDF(x = swsn, filename = filePath,
+                  overwrite = TRUE,
+                  unit      = units,
+                  varname   = varNames,
+                  longname  = longnames)
+
+  domR::print_on_saving(filePath)
+  end <- domR::end_timer(start, "swsn")
+}
+```
+
+## Net Longwave Radiation: lwsn ------------------------------------------------
+```{r}
+# Guard
+proceed <- guard_against_existing(racmoVar = "lwsn", version = params$version)
+if (!isTRUE(proceed)) {
+  cat('\nUse polarcm::read_racmoM("lwsn") to access this dataset\n')
+} 
+
+# Calculate lwsn if necessary
+if (isTRUE(proceed)) {
+  # Calculate lwsn values
+  start <- domR::start_timer("lwsn")
+  lwsd  <- polarcm::read_racmoM("lwsd", params$version)
+  lwsu  <- polarcm::read_racmoM("lwsu", params$version)
+  lwsn  <- lwsd + lwsu
+
+  # Metadata for the NetCDF
+  units     <- terra::units(lwsd)
+  varNames  <- "lwsn"
+  longnames <- "Net Longwave Radiation at Surface (Incident + Emitted)"
+  
+  # Save as a new NetCDF
+  filePath <- create_new_racmoM_filename("lwsn")
+  terra::writeCDF(x = lwsn, filename = filePath,
+                  overwrite = TRUE,
+                  unit      = units,
+                  varname   = varNames,
+                  longname  = longnames)
+
+  domR::print_on_saving(filePath)
+  end <- domR::end_timer(start, "lwsn")
+}
+```
+
+## Albedo: albd ----------------------------------------------------------------
+```{r}
+# Guard
+proceed <- guard_against_existing(racmoVar = "albd", version = params$version)
+if (!isTRUE(proceed)) {
+  cat('Use polarcm::read_racmoM("albd") to access this dataset\n')
+}
+
+# Calculate albd if necessary
+if (isTRUE(proceed)) {
+  # Calculate albedo values
+  start <- domR::start_timer("albd")
+  swsu  <- polarcm::read_racmoM("swsu", params$version)
+  swsd  <- polarcm::read_racmoM("swsd", params$version)
+  albd  <- (swsu / swsd * -1) |> round(4)
+  
+  albd[albd == Inf] <- NA     # occurs in polar winter
+  albd[albd > 1] <- NA        # rounding errors?
+  albd[albd < 0] <- NA        # rounding errors?
+  
+  # Metadata for the NetCDF
+  units     <- rep(".", terra::nlyr(albd)) # albedo is unitless
+  varNames  <- "albd"
+  longnames <- "Shortwave Surface Albedo"
+  
+  # Save as a new NetCDF
+  filePath <- create_new_racmoM_filename("albd")
+  terra::writeCDF(x = albd, filename = filePath,
+                  overwrite = TRUE,
+                  unit      = units,
+                  varname   = varNames,
+                  longname  = longnames)
+  
+  domR::print_on_saving(filePath)
+  end <- domR::end_timer(start, "albd")
+}
+```
+
+## Absolute Wind Speed: w10m ---------------------------------------------------
+```{r}
+# Guard
+proceed <- guard_against_existing(racmoVar = "w10m", version = params$version)
+if (!isTRUE(proceed)) {
+  cat('\nUse polarcm::read_racmoM("w10m") to access this dataset\n')
+} 
+
+# Calculate w10m if necessary
+if (isTRUE(proceed)) {
+  # Calculate w10m values
+  start <- domR::start_timer("w10m")
+  u10m  <- polarcm::read_racmoM("u10m", params$version)
+  v10m  <- polarcm::read_racmoM("v10m", params$version)
+  w10m  <- sqrt((u10m^2) + (v10m^2))
+
+  # Metadata for the NetCDF
+  units     <- terra::units(u10m)
+  varNames  <- "w10m"
+  longnames <- "10-m Absolute Wind Speed"
+  
+  # Save as a new NetCDF
+  filePath <- create_new_racmoM_filename("w10m")
+  terra::writeCDF(x = w10m, filename = filePath,
+                  overwrite = TRUE,
+                  unit      = units,
+                  varname   = varNames,
+                  longname  = longnames)
+
+  domR::print_on_saving(filePath)
+  end <- domR::end_timer(start, "w10m")
+}
+```
+
+# Create racmoD NetCDFs ========================================================
+Daily RACMO data is split into decadal files as 40 years is a lot of data! We'll
+copy this decadal data structure for the derived values.
+
+It is possible that these chunks will fail when running as a loop because of the 
+large file sizes and the limited computer memory. If that is the case and R 
+crashes, each of the decadal files needs to be run separately. To do that, set 
+'iiCount' manually and run each decade on its own. In such a case, the warning 
+may or may not be thrown (depending on when the `polarcm` package was last 
+configured, and thus whether it acknowledges any of the files); simply uncomment 
+the "proceed" line in a chunk to overrule the guard.
+
+## Albedo: albd ----------------------------------------------------------------
+```{r}
+# Change this to calculate only a single decadal file at once
+iiCount <- 1:5
+
+# Guard
+proceed <- guard_against_existing(racmoVar = "albd", 
+                                  version = params$version, 
+                                  resolution = "daily")
+if (!isTRUE(proceed)) {
+  cat('Use polarcm::read_racmoD("albd") to access this dataset\n')
+}
+
+# Uncomment here to ignore the result of guard_against_existing
+# proceed <- TRUE     
+
+# Calculate albd if necessary
+if (isTRUE(proceed)) {
+  # Necessary data paths
+  swsdPaths <- .polarEnv$varPaths$racmoD[[params$version]]$swsd |> sort()
+  swsuPaths <- .polarEnv$varPaths$racmoD[[params$version]]$swsu |> sort()
+  if (length(swsuPaths) != length(swsdPaths)) stop("Required files don't match")
+
+  # Derive new variable
+  for (ii in iiCount) {
+    start <- domR::start_timer("albd", ii)
+    
+    # Grab the data
+    iiSwsd <- terra::rast(swsdPaths[[ii]], subds = "swsd")
+    iiSwsu <- terra::rast(swsuPaths[[ii]], subds = "swsu")
+
+    # Calculate the albedo
+    iiAlbd <- (iiSwsu / iiSwsd * -1)
+    iiAlbd[iiAlbd == Inf] <- NA     # occurs in polar winter
+    iiAlbd[iiAlbd > 1] <- NA        # rounding errors?
+    iiAlbd[iiAlbd < 0] <- NA        # rounding errors?
+    
+    end <- domR::end_timer(start, "Calculated albd", ii)
+    
+    # Metadata for the NetCDF
+    units     <- rep(".", terra::nlyr(iiAlbd)) # albedo is unitless
+    varNames  <- "albd"
+    longnames <- "Shortwave Surface Albedo"
+    
+    # Save as a NetCDF
+    filePath <- gsub(pattern = "swsd", replacement = "albd", 
+                     x = swsdPaths[[ii]])
+    
+    terra::writeCDF(x = iiAlbd, 
+                    filename = filePath,
+                    overwrite = TRUE,
+                    unit      = units,
+                    varname   = varNames,
+                    longname  = longnames,
+                    atts = domR::get_metadata(format = "NetCDF"))
+    domR::cat3("Saved successfully! \n", filePath, nStart = 0)
+  }
+}  
+
+domR::print_on_saving(filePath)
+```
+
+## Net Shortwave Radiation: swsn -----------------------------------------------
+```{r}
+# Change this to calculate only a single decadal file at once
+iiCount <- 1:5
+
+# Guard
+proceed <- guard_against_existing(racmoVar = "swsn", 
+                                  version = params$version, 
+                                  resolution = "daily")
+if (!isTRUE(proceed)) {
+  cat('Use polarcm::read_racmoD("swsn") to access this dataset\n')
+}
+
+# Uncomment here to ignore the result of guard_against_existing
+# proceed <- TRUE     
+
+# Calculate swsn if necessary
+if (isTRUE(proceed)) {
+  # Necessary data paths
+  swsdPaths <- .polarEnv$varPaths$racmoD[[params$version]]$swsd |> sort()
+  swsuPaths <- .polarEnv$varPaths$racmoD[[params$version]]$swsu |> sort()
+  if (length(swsuPaths) != length(swsdPaths)) stop("Required files don't match")
+
+  # Derive new variable
+  for (ii in iiCount) {
+    start <- domR::start_timer("swsn", ii)
+    
+    # Grab the necessary data
+    iiSwsd <- terra::rast(swsdPaths[[ii]], subds = "swsd")
+    iiSwsu <- terra::rast(swsuPaths[[ii]], subds = "swsu")
+    
+    # Calculate the net shortwave radiation
+    iiSwsn <- iiSwsd + iiSwsu
+    end <- domR::end_timer(start, "Calculated swsn", ii)
+    
+    # Metadata for the NetCDF
+    units     <- terra::units(iiSwsd)
+    varNames  <- "swsn"
+    longnames <- "Net Shortwave Radiation at Surface (Incident + Reflected)"
+  
+    # Save as a NetCDF
+    filePath <- gsub(pattern = "swsd", 
+                     replacement = "swsn", x = swsdPaths[[ii]])
+    
+    terra::writeCDF(x = iiSwsn, 
+                    filename = filePath,
+                    overwrite = TRUE,
+                    unit      = units,
+                    varname   = varNames,
+                    longname  = longnames,
+                    atts = domR::get_metadata(format = "NetCDF"))
+    domR::cat3("Saved successfully! \n", filePath, nStart = 0)
+  }
+}  
+```
+
+
+## Net Longwave Radiation: lwsn -----------------------------------------------
+```{r}
+# Change this to calculate only a single decadal file at once
+iiCount <- 1:5
+
+# Guard
+proceed <- guard_against_existing(racmoVar = "lwsn", 
+                                  version = params$version, 
+                                  resolution = "daily")
+if (!isTRUE(proceed)) {
+  cat('Use polarcm::read_racmoD("lwsn") to access this dataset\n')
+}
+
+# Uncomment here to ignore the result of guard_against_existing
+# proceed <- TRUE     
+
+# Calculate lwsn if necessary
+if (isTRUE(proceed)) {
+  # Necessary data paths
+  lwsdPaths <- .polarEnv$varPaths$racmoD[[params$version]]$lwsd |> sort()
+  lwsuPaths <- .polarEnv$varPaths$racmoD[[params$version]]$lwsu |> sort()
+  if (length(lwsuPaths) != length(lwsdPaths)) stop("Required files don't match")
+
+  # Derive new variable
+  for (ii in iiCount) {
+    start <- domR::start_timer("lwsn", ii)
+    
+    # Grab the necessary data
+    iiLwsd <- terra::rast(lwsdPaths[[ii]], subds = "lwsd")
+    iiLwsu <- terra::rast(lwsuPaths[[ii]], subds = "lwsu")
+    
+    # Calculate the net longwave radiation
+    iiLwsn <- iiLwsd + iiLwsu
+    end <- domR::end_timer(start, "Calculated lwsn", ii)
+    
+    # Metadata for the NetCDF
+    units     <- terra::units(iiLwsd)
+    varNames  <- "lwsn"
+    longnames <- "Net Longwave Radiation at Surface (Incident + Emitted)"
+  
+    # Save as a NetCDF
+    filePath <- gsub(pattern = "lwsd", replacement = "lwsn", 
+                     x = lwsdPaths[[ii]])
+    
+    terra::writeCDF(x = iiLwsn, 
+                    filename = filePath,
+                    overwrite = TRUE,
+                    unit      = units,
+                    varname   = varNames,
+                    longname  = longnames,
+                    atts = domR::get_metadata(format = "NetCDF"))
+    domR::cat3("Saved successfully! \n", filePath, nStart = 0)
+  }
+}  
+```
+
+## Net Turbulent Fluxes: turb --------------------------------------------------
+```{r}
+# Change this to calculate only a single decadal file at once
+iiCount <- 1:5
+
+# Guard
+proceed <- guard_against_existing(racmoVar = "turb", 
+                                  version = params$version, 
+                                  resolution = "daily")
+if (!isTRUE(proceed)) {
+  cat('Use polarcm::read_racmoD("turb") to access this dataset\n')
+}
+
+# Uncomment here to ignore the result of guard_against_existing
+# proceed <- TRUE     
+
+# Calculate turb if necessary
+if (isTRUE(proceed)) {
+  # Necessary data paths
+  senfPaths <- .polarEnv$varPaths$racmoD[[params$version]]$senf |> sort()
+  latfPaths <- .polarEnv$varPaths$racmoD[[params$version]]$latf |> sort()
+  if (length(senfPaths) != length(latfPaths)) stop("Required files don't match")
+
+  # Derive new variable
+  for (ii in iiCount) {
+    start  <- domR::start_timer("turb", ii)
+    
+    # Grab the necessary data
+    iiSenf <- terra::rast(senfPaths[[ii]], subds = "senf")
+    iiLatf <- terra::rast(latfPaths[[ii]], subds = "latf")
+    
+    # Calculate the net turbulent radiation
+    iiTurb <- iiSenf + iiLatf
+    end <- domR::end_timer(start, "Calculated turb", ii)
+    
+    # Metadata for the NetCDF
+    units     <- terra::units(iiSenf)
+    varNames  <- "turb"
+    longnames <- "Net Turbulent Heat Flux at the Surface (inc. Latent & Sensible)"
+
+    # Save as a NetCDF
+    filePath <- gsub(pattern = "senf", replacement = "turb", 
+                     x = senfPaths[[ii]])
+    
+    terra::writeCDF(x = iiTurb, 
+                    filename = filePath,
+                    overwrite = TRUE,
+                    unit      = units,
+                    varname   = varNames,
+                    longname  = longnames,
+                    atts = domR::get_metadata(format = "NetCDF"))
+    domR::cat3("Saved successfully! \n", filePath, nStart = 0)
+  }
+}  
+```
+
+## Net Radiative Fluxes: radi --------------------------------------------------
+```{r}
+# Change this to calculate only a single decadal file at once
+iiCount <- 1:5
+
+# Guard
+proceed <- guard_against_existing(racmoVar = "radi", 
+                                  version = params$version, 
+                                  resolution = "daily")
+if (!isTRUE(proceed)) {
+  cat('Use polarcm::read_racmoD("radi") to access this dataset\n')
+}
+
+# Uncomment here to ignore the result of guard_against_existing
+# proceed <- TRUE     
+
+# Calculate radi if necessary
+if (isTRUE(proceed)) {
+  # Necessary data paths
+  swsdPaths <- .polarEnv$varPaths$racmoD[[params$version]]$swsd |> sort()
+  swsuPaths <- .polarEnv$varPaths$racmoD[[params$version]]$swsu |> sort()
+  lwsdPaths <- .polarEnv$varPaths$racmoD[[params$version]]$lwsd |> sort()
+  lwsuPaths <- .polarEnv$varPaths$racmoD[[params$version]]$lwsu |> sort()
+  if (length(swsuPaths) != length(lwsuPaths)) stop("Required files don't match")
+
+  # Derive new variable
+  for (ii in iiCount) {
+    start  <- domR::start_timer("radi", ii)
+    
+    # Grab the necessary data
+    iiSwsd <- terra::rast(swsdPaths[[ii]], subds = "swsd")
+    iiLwsd <- terra::rast(lwsdPaths[[ii]], subds = "lwsd")
+    iiSwsu <- terra::rast(swsuPaths[[ii]], subds = "swsu")
+    iiLwsu <- terra::rast(lwsuPaths[[ii]], subds = "lwsu")
+    
+    # Calculate the net turbulent radiation
+    iiRadi <- iiSwsd + iiLwsd + iiSwsu + iiLwsu
+    end <- domR::end_timer(start, "Calculated radi", ii)
+    
+    # Metadata for the NetCDF
+    units     <- terra::units(iiSwsd)
+    varNames  <- "radi"
+    longnames <- "Net Radiation at the Surface (inc. Longwave & Shortwave)"
+
+    # Save as a NetCDF
+    filePath <- gsub(pattern = "swsd", replacement = "radi", 
+                     x = swsdPaths[[ii]])
+    
+    terra::writeCDF(x = iiRadi, 
+                    filename = filePath,
+                    overwrite = TRUE,
+                    unit      = units,
+                    varname   = varNames,
+                    longname  = longnames,
+                    atts = domR::get_metadata(format = "NetCDF"))
+    domR::cat3("Saved successfully! \n", filePath, nStart = 0)
+  }
+}  
+```
