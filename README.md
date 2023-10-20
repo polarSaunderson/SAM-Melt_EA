@@ -1,14 +1,16 @@
-# SAM-Melt_EA v4.0
+# SAM-Melt_EA v4.1
 
 ## How Does the Southern Annular Mode Control Surface Melt in East Antarctica?
 
 The notebooks in this repository contain R code that has been used to investigate the influence of the Southern Annular Mode (SAM) on surface melt in East Antarctica.
 This work has been undertaken as part of my PhD with the [Monash Ice Sheet Initiative](https://www.icesheet.org/) and [SAEF](https://arcsaef.com) at [Monash University](https://www.monash.edu/science/schools/earth-atmosphere-environment/our-people). 
 
-An accompanying manuscript is currently under consideration.
+An accompanying manuscript has been submitted and is currently under consideration.
 
 The code in this repository is being shared in the interests of transparency and open science, and can be used to recreate the figures found in the manuscript and its supporting information. 
 
+**Updated**: 
+- Version v4.1 corrects an error in v4.0 that meant ice shelves were labelled west-to-east in Figure 2, but plotted east-to-west. They are now both labelled and plotted west-to-east.
 ---
 
 ## General Overview of the Repository

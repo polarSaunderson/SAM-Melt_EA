@@ -239,8 +239,8 @@ klimaKulas <- kulaR::kulaK("bam", 14, skipMid = 2,
 ```{r}
 # Transpose & mirror melt matrices
 # We want shelves running west-to-east left-to-right, and time to be vertical
-zMelt <- as.matrix(zDJ)  |> t() |> domR::mirror_matrix_vertically()
-zPeak <- as.matrix(peak) |> t() |> domR::mirror_matrix_vertically()
+zMelt <- as.matrix(zDJ)  |> t()
+zPeak <- as.matrix(peak) |> t()
 
 # Melt kulas
 meltKulas <- kulaR::kulaD(13, include = c(1:5, 7, 9:13)) # middle white = median
