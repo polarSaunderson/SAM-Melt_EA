@@ -1,0 +1,123 @@
+---
+title: dt02_calculate_shelfwide_meltM.qmd
+abstract: |
+  The purpose of this notebook is to calculate a monthly shelfwide-average melt 
+  flux for all 27 ice shelves from the RACMO data (see dt00 for the shelves). 
+  
+  We use the RACMO2.3p3 monthly snowmelt data from van Dalum et al. (2022), 
+  which provides melt values as kg m-2 (i.e. the total mass of meltwater, in kg, 
+  that is produced in each 1x1m square of the pixel over the full month). 
+  
+  Snowmelt values are extracted for each pixel that is at least 50% ice shelf, 
+  then summed and averaged by the total extracted area. The final units are 
+  kg m-2 (per month).
+  
+params:
+  months:  [11, 12, 1, 2]
+  summers: !expr c(1980:2018)
+---
+
+# Data Prep & Set-Up ===========================================================
+```{r}
+source("R/su01_set_up.R")
+```
+
+## Get RACMO Data
+```{r}
+# Read data & subset to params$months; only include summers w/ all params$months
+meltData <- polarcm::subset_racmoM_by_month(racmoData = "snowmelt", 
+                                            months = params$months, 
+                                            excludeIncomplete = 3)
+```
+
+## Preallocate
+```{r}
+meltList   <- list()      # holds, for each month, a matrix of melt values
+meltMatrix <- matrix(NA,  # the template matrix of melt values for a month
+                     ncol = length(pToken$shelves) + 1,
+                     nrow = length(params$summers)) |>
+  as.data.frame() |>
+  `colnames<-`(c(pToken$shelves, "EA-Wide")) |>
+  `rownames<-`(params$summers)
+```
+
+# Calculate Melt Values ========================================================
+## Shelf-wide mean monthly melt fluxes
+```{r}
+# time it
+start <- domR::start_timer("Calculting shelfwide monthly means")
+
+# Loop through each month & calculate shelf-wide average melt values
+for (ii in params$months) {
+  # Data for month ii
+  iiRacmo <- polarcm::subset_racmoM_by_month(meltData, months = ii)
+  iiMelt  <- meltMatrix    # refresh for each month 
+  
+  # Loop through shelves
+  for (jj in colnames(iiMelt)) {     # colnames are shelf names (or "EA-wide")
+    # Get extent
+    if (jj == "EA-Wide") {
+      jjExtent <- pToken$shelves     # EA-wide calls all shelves we want
+    } else {
+      jjExtent <- jj                 # just a single shelf
+    }
+
+    # the shelf
+    jjShelf <- polarcm::get_shelf_outline(jjExtent)
+    
+    # Calculate mean value across the shelf
+    jjMean  <- polarcm::calc_fun_in_space(x = iiRacmo,
+                                          extent  = jjShelf,
+                                          minArea = 0.5, 
+                                          FUN     = "mean")
+    
+    # Store each shelf's data beyond the loop
+    iiMelt[[jj]] <- jjMean$mean_snowmelt
+  }
+  
+  # Store each month's data beyond the loop
+  meltList[[month.abb[ii]]] <- round(iiMelt, 4)
+}
+end <- domR::end_timer(start)
+```
+
+## Calculate summer-totals
+This chunk only makes sense if params$months includes November through February.
+```{r}
+meltList$NDJF <- (meltList$Nov + meltList$Dec + meltList$Jan + meltList$Feb)
+meltList$DJ   <- (meltList$Dec + meltList$Jan)
+
+meltList$NDJF <- round(meltList$NDJF, 5)
+meltList$DJ   <- round(meltList$DJ, 5)
+```
+
+# Save =========================================================================
+## Metadata
+```{r}
+# Create metadata
+blurb <- paste("These values are the average melt produced (in kg) for each",
+               "square metre of the respective ice shelf over the time period",
+               "(i.e. the units are kg m-2 month-1 or kg m-2 DJ-1). The shelf",
+               "boundaries are from MEaSURES v2 (Mouginot et al., 2017); only",
+               "RACMO pixels which are at least 50% ice shelf are included.",
+               "The melt fluxes are from RACMO2.3p3 (van Dalum et al., 2021).")
+
+toSave <- list()
+toSave$info <- domR::get_metadata(format = "json",
+                                  blurb  = blurb,
+                                  "shelves" = pToken$shelves,
+                                  "racmoM"  = .polarEnv$datasets$racmoM$rp3$doi,
+                                  "MEaSURES" = .polarEnv$datasets$MEaSURES$doi)
+
+# Add the melt data
+toSave$shelfwide_melt <- meltList
+```
+
+## Save as a serialised json list
+```{r}
+newDir <- "Data/shelfwide_mean/"
+if (!dir.exists(newDir)) dir.create(newDir)
+
+fileName <- paste0(newDir, "racmoM_shelfwide_mean_snowmelt-dt02.json")
+domR::save_list(toSave, fileName)
+```

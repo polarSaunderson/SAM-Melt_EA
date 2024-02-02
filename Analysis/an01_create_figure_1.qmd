@@ -2,16 +2,18 @@
 title: "an01_create_figure_1.qmd"
 abstract: |
   The purpose of this notebook is to create Figure 1 in the GRL manuscript.
-  Figure 1 shows a map of the median RACMO melt in Antarctica (1980--2018).
+  
+  Figure 1 shows a map of the median NDJF RACMO melt in Antarctica (1980-2018).
   The figure is based on monthly RACMO2.3p3 modelled melt fluxes (van Dalum et 
   al. 2021), available on Zenodo: https://doi.org/10.5281/zenodo.5512076.
   
   The correlation (on a pixel-by-pixel basis) with satellite melt days are also
-  shown on the figure, using the AMSR melt dataset of Picard (2022). 
-  The correlation is performed over the contemporary periods (2003--2018).
+  shown on the figure, using the AMSR melt dataset of Picard (2022), available
+  at: https://doi.org/10.18709/PERSCIDO.2022.09.DS376.
+  The correlation is performed over the contemporary periods (2003-2018).
   
-  !! To calculate & plot the correlations, it is necessary to have first run 
-  dt03, which prepares the AMSR data.
+  !! To calculate & plot the correlations, it is necessary to have already run 
+  dt03 first to prepare the AMSR data.
 ---
 
 # Data Prep & Set-Up ===========================================================
@@ -82,6 +84,7 @@ amsrMelt <- terra::resample(x = amsrMelt, y = racmoMelt, method = "bilinear")
 ```
 
 ## Correlate
+This should take < 30 seconds.
 ```{r}
 # Create new raster combining both datasets
 # This approach allows terra::app() to correlate the two rasters
@@ -139,7 +142,7 @@ dotsR <- terra::as.points(kawR)   # all the correlation estimates
 dotsP <- terra::as.points(kawP)   # all the p-values
 
 # and we'll only plot dots where the correlation is insignificant (p > 0.05)
-insig5  <- dotsR[terra::values(dotsP) > 0.05]  
+insig5  <- dotsR[terra::values(dotsP) > 0.05]
 ```
 
 ## Plot here to see so far
@@ -152,7 +155,8 @@ terra::lines(regLines, lwd = 2, col = "black")   # regional separators
 ## Colours for Median melt values
 ```{r}
 # Prepare colours for the melt fluxes
-meltKulas <- kulaR::kulaS(count = 18, addLast = "black")
+meltKulas <- kulaR::kulaK(count = 25, include = c(1:18, 20),
+                          palette = "lajolla")
 meltRange <- c(0, 285)
 ```
 
@@ -164,9 +168,9 @@ add_antarctic_lines <- function() {
   polarcm::draw_antarctica(extent = "", sbcg = "cg",       # coastline & GL
                            col = kulaL(2, 5), lwd = 0.1)
   polarcm::draw_antarctica(extent = "", sbcg = "b",        # basin outlines
-                           col = kulaL(3, 2), lwd = 0.1)
+                           col = kulaL(4, 3), lwd = 0.1)
   polarcm::draw_antarctica(extent = pToken$shelves,        # 27 shelf outlines
-                           sbcg = "s",  col = "black", lwd = 0.1) 
+                           sbcg = "s",  col = "black", lwd = 0.05) 
 }
 
 add_regional_lines <- function() {
@@ -219,15 +223,15 @@ add_map_elements <- function() {
 }
 ```
 
-# Save as PDF
+## Save as PDF
 ```{r}
 # Version & PDF Prepping
 if (!exists("vv")) vv <- 0
 vv <- vv + 1
 
 # Open PDF to write to
-fileName <- paste0(figPath, "fig01v", sprintf("%02d", vv),
-                   "_medianMelt_map-an01.pdf")
+fileName <- paste0(figPath, "fig01_v", sprintf("%02d", vv),
+                   "_medianMeltMap-an01.pdf")
 pdf(fileName, width = 9, height = 7)
 
 # Arrange panels
@@ -240,10 +244,12 @@ terra::plot(x = racmoMedian,
             col = meltKulas, range = meltRange,
             axes = FALSE, legend = FALSE,
             mar = c(0.55, 0, 0.55, 0),
-            xlim = c(-26, 26), ylim = c(-19, 21.5))
+            xlim = c(-26.125, 26.125), ylim = c(-19.125, 21.625))
 
-# Add stipling for insignificant AMSR-RACMO correlations (i.e. p > 0.05)
-terra::points(insig5, pch = 4, col = kulaL(3), cex = 0.01)
+# Add stippling for insignificant AMSR-RACMO correlations (i.e. p > 0.05)
+terra::points(insig5, pch = 4,
+              col = kulaL(5, 8),
+              cex = 0.1, lwd = 0.1)
 
 # Decoration -------------------------------------------------------------------
 draw_racmo_axes(terra::ext(c(-26.5, 26.5, -19, 21.5)), interval = 10,

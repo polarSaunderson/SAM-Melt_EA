@@ -15,6 +15,8 @@ align_sam_to_summers <- function(filePath = "noaa",
   #'   or "marshall" if the data is stored in a "../../Data/Climate_Indices/SAM/"
   #'   directory as either "sam_NOAA_monthly.csv", or "sam_Mars2003_monthly.csv".
   #'   The data can be downloaded from:
+  #'   - (NOAA):     https://www.cpc.ncep.noaa.gov/products/precip/CWlink/daily_ao_index/aao/monthly.aao.index.b79.current.ascii.table
+  #'   - (Marshall): http://www.nerc-bas.ac.uk/public/icd/gjma/newsam.1957.2007.txt
   #'   It needs to be tidied.
   #'   
   #' @param australSplit Which is the last month of an austral summer / year

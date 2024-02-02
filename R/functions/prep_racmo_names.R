@@ -10,9 +10,9 @@ prep_racmo_names <- function(racmoVars,
   #'
   #' Help with labelling of RACMO variables and units
   #'
-  #' @description The shortened variable names (e.g. "senf") are always clear on
-  #'   a plot. Instead, we usually want a full or abbreviated name, and possibly
-  #'   the units as well (for example "Sensible Heat Flux (W m-2)".
+  #' @description The shortened variable names (e.g. "senf") are not always 
+  #'   clear on a plot. Instead, we usually want a full or abbreviated name, and 
+  #'   possibly the units as well (for example "Sensible Heat Flux (W m-2)".
   #'
   #'   Those changes requires a lot of repeated typing prone to mistakes,
   #'   particularly when concerned with the superscripts and subscripts with
@@ -35,14 +35,14 @@ prep_racmo_names <- function(racmoVars,
   #' @param originalUnits Should the same units as the dataset be used (TRUE;
   #'   default)? Usually this makes the most sense, but some of the variables
   #'   are often changed in the same way for ease of use. For example, it is
-  #'   usually easier to think of snow/ice temperatures in `\u00B0`C rather than
+  #'   usually easier to think of snow/ice temperatures in Celsius rather than
   #'   Kelvin, to use Watts rather than total Joules, and to think of melt or
   #'   precipitation as daily totals rather than fluxes per second.
   #'
   #'   Be *VERY VERY VERY* careful if setting this as FALSE - it just assumes
   #'   that the changes are the common ones that I have previously done. There
-  #'   is nothing clever about it! Set this or 'monthlyData' as NULL to suppress
-  #'   the unit in the returned expression.
+  #'   is nothing clever about it! Set this argument or 'monthlyData' as NULL to 
+  #'   suppress the unit in the returned expression.
   #' @param monthlyData Is the RACMO data monthly resolution (i.e. racmoM; TRUE)
   #'   or daily (i.e. racmoD; FALSE, the default)? For some variables, this
   #'   makes a difference (e.g. all radiative fluxes are in Joules in monthly
@@ -60,7 +60,7 @@ prep_racmo_names <- function(racmoVars,
   # Prep
   before <- set_if_null(before, NA)
   after  <- set_if_null(after, NA)
-
+  
   # Prep for brackets
   if (!is.null(monthlyData) & !is.null(originalUnits)) {
     bracket1 <- set_if_null(bracket1, 5)
@@ -70,7 +70,7 @@ prep_racmo_names <- function(racmoVars,
     bracket2 <- set_if_null(bracket2, NA)
   }
   b1 <- NA; b3 <- NA; b5 <- NA; b7 <- NA; b9 <- NA
-    
+  
   # Guard against incorrect bracket use
   if (!is.na(bracket1) & !is.na(bracket2)) {
     if (bracket1 > bracket2) stop("bracket1 must come before bracket2!")
@@ -104,7 +104,7 @@ prep_racmo_names <- function(racmoVars,
                         "refreeze" = "Surface Refreezing",
                         "runoff"   = "Surface Runoff",
                         "subl"     = "Sublimation",
-                        "snowmelt" = "Melt Flux",
+                        "snowmelt" = "Surface Melt Flux",
                         "t2m"      = "Surface (2m) Air Temperatures",
                         "albd"     = ,
                         "albedo"   = "Surface Albedo",
@@ -120,7 +120,6 @@ prep_racmo_names <- function(racmoVars,
                         "latf"     = "Latent Heat",
                         "gbot"     = "Ground Heat Flux",
                         "seb"      = "Surface Energy Balance",
-                        "seb2"     = "Surface Energy Balance2",
                         "mslp"     = "MSL Pressure",
                         "wind"     = "Absolute Wind Speed",
                         "w10m"     = "Absolute Wind Speed",
@@ -128,13 +127,14 @@ prep_racmo_names <- function(racmoVars,
                         "u10m"     = "Zonal Wind Speed")
     } else if (isTRUE(shortName)) {
       nameBit <- switch(iiVar,
-                        "precip"   = "Precip.",
+                        "precip"   = "Precipitation",
                         "smb"      = "SMB",
                         "sndiv"    = "Snow Drift",
                         "refreeze" = "Refreezing",
                         "runoff"   = "Runoff",
                         "subl"     = "Subl.",
-                        "snowmelt" = "Melt",
+                        "snowmelt" = "Surface Melt",
+                        "melt"     = "Melt",
                         "t2m"      = bquote(~T["2m"]),
                         "albd"     = ,
                         "albedo"   = "Albedo",
@@ -146,15 +146,14 @@ prep_racmo_names <- function(racmoVars,
                         "lwsu"     = bquote(~LW["OUT"]),
                         "radi"     = bquote(~Radiative["NET"]),
                         "turb"     = bquote(~Turbulent["NET"]),
-                        "senf"     = "Sens. Heat",
+                        "senf"     = "Sensible Heat",
                         "latf"     = "Latent Heat",
                         "gbot"     = "Ground Heat",
-                        "seb2"     = "SEB2",
                         "seb"      = "SEB",
                         "mslp"     = "MSLP",
                         "wind"     = "Wind Speed",
                         "w10m"     = "Wind Speed",
-                        "v10m"     = "Merid. Winds",
+                        "v10m"     = "Meridional Winds",
                         "u10m"     = "Zonal Winds")
     } else if (is.null(shortName)) {
       nameBit <- NA
@@ -229,7 +228,7 @@ prep_racmo_names <- function(racmoVars,
                                          b7 = b7, b9 = b9))
     
   }
-
+  
   # If only one, unlist it so it is easier to use
   if (length(racmoVars) == 1) {
     nameList <- nameList[[iiVar]]

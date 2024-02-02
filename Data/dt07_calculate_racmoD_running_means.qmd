@@ -1,10 +1,11 @@
 ---
 title: dt07_calculate_racmoD_running_means.qmd
 abstract: |
-  The purpose of this notebook is to create running means of racmoD data. 
-  This data is used for the panels in Figure 4.
+  The purpose of this notebook is to create running means of daily RACMO data. 
+  This data is used in an04 (to create Figure 4), and in an07 (to create 
+  supplementary figures 5, 6 & 7).
   
-  !! It is necessary to run dt06 for the before using this notebook.
+  !! It is necessary to run dt06 before using this notebook.
   
   Different window lengths for the running mean can be selected, but they should
   be an odd number. In the GRL manuscript, Figure 4 uses a 9-day window (based 
@@ -24,17 +25,20 @@ abstract: |
        the Standard Deviation, Median, and InterQuartile & InterDecile Ranges
      
   3) Calculate the correlation of the running means with the running SAM.
-     To illustrate: the mean racmoVar on 11--19 December each summer (e.g. 39 
-     values if 1980--2018) is correlated with the mean SAM variable on the 
-     11--19 December each summer.
+     To illustrate: the mean racmoVar on 11-19 December each summer (e.g. 39 
+     values if 1980-2018) is correlated with the mean SAM variable on the 
+     11-19 December each summer.
      
   4) Calculate the correlation of the running means against a lagged running 
      SAM. Set via params:samLag, which indicates how many days the SAM data is 
      before the variable. 
      For example, if lag = 7 (and windowLength = 9), the mean racmoVar from the 
-     11--19 Dec (referred to by the midpoint of 15 Dec) is correlated with the 
-     SAM from the 4--12 Dec (referred to as 8 Dec). In Fig. 4 in the GRL 
+     11-19 Dec (referred to by the midpoint of 15 Dec) is correlated with the 
+     SAM from the 4-12 Dec (referred to as 8 Dec). In Fig. 4 in the GRL
      manuscript, this lag is set as 28 days.
+
+  Parts 3 and 4 require the daily SAM data; it can be accessed at:
+    https://ftp.cpc.ncep.noaa.gov/cwlinks/norm.daily.aao.cdas.z700.19790101_current.csv
 
 params:
   racmoVar: "snowmelt"
@@ -203,13 +207,13 @@ domR::save_list(x = toSaveRunning, filename = fnRunning)
 
 # Part II: Create Climatology Statistics =======================================
 ## Guard
-This part of the notebook requires that the output from Part I is in the memory.
-If it is not, but it has been created, run this chunk.
+Part II of the notebook requires that the output from Part I is in the memory.
+If it is not, but it has been created, run this chunk; otherwise run Part I.
 ```{r}
 # Make sure necessary values are in memory
 if (!exists("runningVar")) {
   fileName <- paste0(dirPath, paste("racmoD_running", params$windowLength, 
-                                   params$racmoVar, sep = "_"), "-dt08.json")
+                                   params$racmoVar, sep = "_"), "-dt07.json")
   runningVar <- domR::read_list(fileName)[[2]]
 } else {
   message("Data already created and available!")
@@ -312,13 +316,15 @@ domR::save_list(x = toSaveKlima, filename = fnKlima)
 ## Prepare SAM data ------------------------------------------------------------
 The chunks preparing SAM do not need to be run if the necessary SAM data has 
 already been created before (i.e. with the same `params$windowLength`). They do
-need running if using different `params$windowLength`.
+need to be run if using a different `params$windowLength`.
 
-For example, the first time this notebook is run for snowmelt, the SAM data
+For example, the first time this notebook is run for `snowmelt`, the SAM data
 will be prepared and saved. To do this, run chunks with "1st time" after their 
 title. When running the notebook again (e.g. for t2m), the SAM data already 
 exists and it is not necessary to run the SAM part again. Instead, load it into 
 memory (chunks with "SAM exists" after the title).
+
+The daily SAM data is available here: https://ftp.cpc.ncep.noaa.gov/cwlinks/norm.daily.aao.cdas.z700.19790101_current.csv
 
 ### Access Daily SAM data (1st time)
 ```{r}
@@ -342,7 +348,7 @@ noaaRaw$monthDay <- terrapin::handle_monthDays(noaaRaw$date)
 
 ### Smooth SAM (1st time)
 We want to create a running window that matches the RACMO variables in length.
-This smoothing is necessary for Part III (here) and Part IV (w/ lagged SAM).
+This smoothing is necessary for Part III (i.e. here) & Part IV (w/ lagged SAM).
 ```{r}
 # Create a new column to hold the smoothed / running value
 smoothName <- paste0("sam", params$windowLength)
@@ -360,10 +366,10 @@ for (ii in (sideWindow + 1):(nrow(noaaRaw) - sideWindow)) {
 
 ### Save SAM (1st time)
 ```{r}
-blurb3 <- paste("Daily SAM index from NOAA CPC. The values are also smoothed,",
-                "using a", params$windowLength, "day running mean in dt07,",
-                "part III. The smooth values are calculated as the mean of the",
-                "values on the day, the", sideWindow, "days before, and the", 
+blurb3 <- paste("Daily SAM index from NOAA CPC. The values are smoothed, using",
+                "a", params$windowLength, "day running mean in dt07, part III.",
+                "The smooth values are calculated as the mean of the values",
+                "on the day, the", sideWindow, "days before, and the", 
                 sideWindow, "days after. The dates therefore refer to the", 
                 "middle of a", params$windowLength, "day window.")
 
@@ -391,7 +397,7 @@ smoothName <- paste0("sam", params$windowLength)
 ```{r}
 # Then filter based on these new columns
 noaaNow <- domR::sift(noaaRaw, "summer in vector", xSummers)
-noaaNow <- noaaNow[which(noaaNow$monthDay %in% uniqueDates), ] # sift fails so manually
+noaaNow <- noaaNow[which(noaaNow$monthDay %in% uniqueDates), ] # domR::sift fails so manually
 ```
 
 ## Correlate Running SAM and Running RACMO -------------------------------------
@@ -523,7 +529,7 @@ for (ii in usableDays) {
   # Get NOAA data for day ii
   iiNoaa <- noaaLag[iiIndexLagN, smoothName] |> linear_detrend()
   
-  # Calculate lagged SAM- melt correlation for each ice shelf
+  # Calculate lagged SAM-melt correlation for each ice shelf
   for (jj in pToken$shelves) {
     ijRacmo <- runningVar[iiIndexR , jj] |> linear_detrend()
     
@@ -578,7 +584,7 @@ blurb5 <- paste("SAM-RACMO correlations, calculated using the running means of",
                 "use lagged values. For example, (if windowLength is 9 and",
                 "samLag is 7), the value on the 15th Dec is calculated as the",
                 "correlation between the mean, shelfwide RACMO variable for",
-                "the 11--19 Dec (9 day window), and the mean SAM index for the",
+                "the 11-19 Dec (9 day window), and the mean SAM index for the",
                 "4-12 Dec (9 day window, 7 day lag). The regional values are",
                 "then the mean value of these correlations for the shelves in",
                 "a region.")

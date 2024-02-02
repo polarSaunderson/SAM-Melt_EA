@@ -1,4 +1,4 @@
-# SAM-Melt_EA v4.1
+# SAM-Melt_EA v5.0
 
 ## How Does the Southern Annular Mode Control Surface Melt in East Antarctica?
 
@@ -9,12 +9,13 @@ An accompanying manuscript has been submitted and is currently under considerati
 
 The code in this repository is being shared in the interests of transparency and open science, and can be used to recreate the figures found in the manuscript and its supporting information. 
 
-**Updated**: 
+**Updates**:
+- Version v5.0 makes some minor changes to the formatting of the figures from v4.1 following the first stage of the peer review process. 
 - Version v4.1 corrects an error in v4.0 that meant ice shelves were labelled west-to-east in Figure 2, but plotted east-to-west. They are now both labelled and plotted west-to-east.
 ---
 
 ## General Overview of the Repository
-This project uses the R programming language and was written using RStudio, on both Windows 10 and MacOS 12.6.3.
+This project uses the R programming language and was written using RStudio, on both Windows 10 and MacOS 14.1.
 It uses the [renv](https://rstudio.github.io/renv/articles/renv.html) package to help with portability / replicability.
 
 Using _renv_ should be easy enough: after getting the repository onto your system (e.g. `git clone`, or just downloading the ZIP), launch the R Project into RStudio by double-clicking the `SAM-Melt_EA.Rproj` file, and _renv_ should be automatically installed (if necessary) and loaded into the memory.
@@ -24,10 +25,10 @@ See also [here](https://rstudio.github.io/renv/articles/collaborating.html) and 
 *Note:* In addition to standard packages from CRAN, it will be necessary to install 5 packages from my [GitHub](https://github.com/polarSaunderson?tab=repositories) page (see "Necessary Personal Packages" below); _renv_ **should** also do this for you.
 
 ### Raw Data
-There is no raw data in this repository. Therefore, to recreate the figures, it is necessary to download the datasets first:
+There is no raw data in this repository. Therefore, to recreate the figures from scratch, it is necessary to download the datasets first:
 
 - The RACMO2.3p3 datasets (van Dalum et al., 2021) are available online at: <https://doi.org/10.5281/zenodo.7639053>.
-- Ice shelves are defined according to the MEaSURES Ice Shelf Boundaries dataset, Version 2 (Mouginot et al., 2017), which is available online at: <https://doi.org/10.5067/AXE4121732AD>.
+- Ice shelves are defined according to the MEaSURES Antarctic Boundaries dataset, Version 2 (Mouginot et al., 2017), which is available online at: <https://doi.org/10.5067/AXE4121732AD>.
 - The Marshall 2003 SAM index is available online from the British Antarctic Survey (BAS) at: <http://www.nerc-bas.ac.uk/public/icd/gjma/newsam.1957.2007.txt>.
 - The NOAA SAM index is available online from the NOAA Climate Prediction Centre (CPC) at: <https://www.cpc.ncep.noaa.gov/products/precip/CWlink/daily_ao_index/aao/aao.shtml>.
 - The NOAA ENSO3.4 index used in Figure 2a is available online from the Physical Science Laboratory (PSL) at: <https://psl.noaa.gov/gcos_wgsp/Timeseries/Data/nino34.long.anom.data>.
@@ -38,38 +39,39 @@ You can also read more about using the RACMO and MEaSURES datasets in my [polarc
 In particular, the documentation for the `configure_polarcm()` function explains the necessary set-up for using these datasets.
 
 ### Repository Structure & File Names
-Most of this repository is written as [Quarto](https://quarto.org) notebooks (`.qmd` files).
-These notebooks contain a brief introduction to the notebook, a _params_ section to define parameters for the plots that can be modified, and then the R code itself, which is separated into a series of "chunks" that should be run in order.
+Most of this repository is written as [Quarto](https://quarto.org) notebooks (i.e. as `.qmd` files).
+These notebooks contain a brief introduction to the notebook, a _params_ section to define any parameters that can be modified for the plots, and then the R code itself, which is separated into a series of "chunks" that should be run in order.
 
 There are two main "types" of notebook in this repository: __dt__ and __an__.
 
 The __dt__ notebooks are necessary for processing and wrangling __data__, and are saved in the `Data/` directory.
 The __dt__ notebooks are numbered, and it makes the most sense to run them in order (i.e. _dt01_, then _dt02_, and so on).
 However, running all 7 __dt__ notebooks is not always strictly necessary if you only want to recreate certain figures; it *should* say at the start of a notebook which other notebooks are prerequisites.
+Note as well, that some of these can be quite slow (particularly _dt01_).
 
 The __an__ notebooks are necessary for recreating and __analysing__ the figures, and are saved in the `Analysis/` directory.
 The __an__ notebooks are also numbered.
-However, the numbering is to ease cross-referencing as the __an__ notebooks are independent of each other and it makes no difference what order they are run in (so long as the necessary __dt__ notebooks have already created the data required).
+However, the numbering is to ease cross-referencing becasuse the __an__ notebooks are independent of each other and it makes no difference what order they are run in (so long as the necessary __dt__ notebooks have already created the data required).
 
-There are also a number of local custom R functions; these should be automatically loaded in by the __su__ (_set-up_) file "R/su01_set_up.R" and need no additional preparation.
+There are also a number of of local custom R functions; these should be automatically loaded in by the __su__ (_set-up_) file "R/su01_set_up.R" and need no additional preparation.
 
-**WARNING**: Do not trust the custom R functions beyond the constraints of their use in this project (i.e. do not expect them to work except **exactly** how I have used them).
+**WARNING**: Do not trust the custom R functions beyond the constraints of their use in this project (i.e. do not expect them to work except exactly how I have used them).
 In particular, the `prep_racmo_names()` function is prone to mistakes and unexpected behaviour.
 
 ## Necessary Personal Packages
 This repository contains code that relies on 5 personal packages that are currently under development but are available on my [GitHub](https://github.com/polarSaunderson?tab=repositories) page.
 These 5 packages (and the version used in this project) are:
 
-  - [domR](https://github.com/polarSaunderson/domR)        (v0.1.5)     functions for easing how I approach a project with R
-  - [kulaR](https://github.com/polarSaunderson/kulaR)       (v0.1.5)     a wrapper around [khroma](https://packages.tesselle.org/khroma/) to ease colour management in plots
-  - [figuR](https://github.com/polarSaunderson/figuR)       (v0.1.2)     for easily customisable figures
-  - [terrapin](https://github.com/polarSaunderson/terrapin)    (v0.1.1)     spinoff from [terra](https://rspatial.github.io/terra/index.html) that eases handling dates of spatial data
-  - [polarcm](https://github.com/polarSaunderson/polarcm)     (v0.1.3)     eases use of output from the polar regional climate models RACMO and MAR
+  - [domR](https://github.com/polarSaunderson/domR)            (v0.1.5)     functions for easing how I approach a project with R
+  - [kulaR](https://github.com/polarSaunderson/kulaR)          (v0.1.5)     a wrapper around [khroma](https://packages.tesselle.org/khroma/) to ease colour management in plots
+  - [figuR](https://github.com/polarSaunderson/figuR)          (v0.1.2)     for easily customisable figures
+  - [terrapin](https://github.com/polarSaunderson/terrapin)    (v0.1.1)     spinoff from [terra](https://rspatial.github.io/terra/index.html) that eases date handling for spatial data
+  - [polarcm](https://github.com/polarSaunderson/polarcm)      (v0.1.3)     eases use of output from the polar regional climate models RACMO and MAR
 
 These should be automatically installed by __renv__. However, they can also be installed like so:
 
 ```R
-devtools::install_packages("polarSaunderson/polarcm@v0.1.3")
+remotes::install_github("polarSaunderson/polarcm")
 ````
 
 ## References

@@ -29,4 +29,4 @@ if (!exists(".polarEnv")) .polarEnv <- new.env()
   "src" = "10.5281/zenodo.5512076") # matches the monthly data
 
 ## .polarEnv should be ready! --------------------------------------------------
-.polarEnv$testing <- "Goooood luck & enjoy!!!"
+.polarEnv$testing <- "Gooooood luck & enjoy!!!"

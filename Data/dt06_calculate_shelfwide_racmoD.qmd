@@ -1,0 +1,127 @@
+---
+title: dt06_calculate_shelfwide_racmoD.qmd
+abstract: |
+  The purpose of this notebook is to create shelfwide daily RACMO variables.
+  This notebook is a similar premise to dt02, but for daily data (so slower).
+  
+  The data from this notebook is needed in dt07, which in turn is used by an04 
+  to create figure 4 of the GRL manuscript, and by an07 to create supplementary 
+  figures 5, 6 & 7.
+  
+  The same 27 shelves are used (see dt00 for their definition), and only pixels
+  that are at least 50% ice shelf (according to MEaSURES Version 2, Mouginot et
+  al. 2017) are included.
+  
+  The daily RACMO data was shared by co-author Christiaan van Dalum; it is from 
+  the same model run as the monthly dataset (doi.org/10.5281/zenodo.5512076), 
+  but saved as daily means / sums.
+  
+  Format the startDate and endDate params as "Mth-dd" (e.g. "Dec-24").
+  
+  Different standard R functions can be used as func; for example, "mean" 
+  returns the average snowmelt of the pixels on a shelf; "sd" would 
+  return the standard deviation of the snowmelt values across the shelf pixels.
+  
+params:
+  racmoVar:  "snowmelt"
+  startDate: "Oct-28"
+  endDate:   "Mar-04"
+  func:      "mean"
+---
+
+# Data Prep & Set-Up
+```{r}
+## Run set-up scripts ----------------------------------------------------------
+source("R/su01_set_up.R")
+```
+
+## Read in raw RACMO and subset based on the param dates
+```{r}
+# Read in based on the dates
+racmoD <- polarcm::read_racmoD(params$racmoVar) |> 
+  polarcm::subset_racmoD_by_summer(summers = 1980:2018) |>
+  terrapin::subset_by_monthDay(periods = c(params$startDate, params$endDate))
+```
+
+## Prealloate & quick check of the dates here 
+```{r}
+# Preallocate with dates; each shelf will get a new column for the values
+shelfwide  <- terrapin::get_date_info(racmoD)
+funVarName <- paste(params$func, params$racmoVar, sep = "_") # to subset output
+
+print(shelfwide)
+```
+
+# Shelfwide values -------------------------------------------------------------
+This can easily take >2-5 minutes.
+```{r}
+# Loop through each shelf
+start <- domR::start_timer(params$racmoVar)
+for (ii in pToken$shelves) {
+  iiShelf <- polarcm::get_shelf_outline(ii)
+  iiData <- polarcm::calc_fun_in_space(x = racmoD,
+                                       extent = iiShelf,
+                                       minArea = 0.5,
+                                       FUN = params$func)
+  shelfwide[[ii]] <- iiData[[funVarName]]  # subset output & ignore the dates
+  domR::cat_progress(which(pToken$shelves == ii), length(pToken$shelves))
+}
+domR::print_line(" ")
+end <- domR::end_timer(start, params$racmoVar)
+```
+
+## Handle units & precision
+```{r}
+# Grab columns with our data in; handles
+colIndex <- pToken$shelves # [pToken$shelves %in% colnames(shelfwide)]
+
+# We round based on the variation in the dataset
+prec <- shelfwide[ ,colIndex] |> unlist() |>
+  sd() |> signif(3) |> 
+  domR::count_decimal_places()
+
+# Round
+shelfwide[ , colIndex] <- shelfwide[ , colIndex] |> round(prec)
+
+# Convert units
+if (params$racmoVar %in% pToken$varMass) {
+    # from kg m-2 s-1 to kg m-2 day-1
+    shelfwide[, colIndex] <- shelfwide[, colIndex] * (60 * 60 * 24)
+} else if (params$racmoVar %in% pToken$varTemperature) {
+    # from Kelvin to Celsius
+    shelfwide[, colIndex] <- shelfwide[, colIndex] - 273.15
+}
+```
+
+# Save =========================================================================
+## Metadata
+```{r}
+blurb <- paste("These values are daily shelfwide", params$racmoVar, "averages.",
+               "Mass values are means of the daily totals (in kg per sq. metre)",
+               "across the respective shelf (i.e. the units are kg m-2 day-1).",
+               "Energy fluxes are means of the daily total energy received for",
+               "each sq. metre (W m-2 day-1). Temperatures are in K. Winds are",
+               "in m s-1. The shelf boundaries are from MEaSURES Version 2",
+               "(Mouginot et al., 2017), and only pixels which are at least",
+               "50% shelf are included. Daily climate data is from RACMO2.3p3",
+               "and have been shared by co-author Christiaan van Dalum. See",
+               "his 2022 TC paper for an overview of the RACMO setup.")
+
+# Convert to a list to store with metadata
+toSave <- list()
+toSave$info <- domR::get_metadata(format = "json",
+                                  blurb  = blurb,
+                                  "shelves" = pToken$shelves)
+toSave[[funVarName]] <- shelfwide
+```
+
+## Save as a json list
+```{r}
+dirName  <- paste0("Data/shelfwide_", params$func, "/")
+if (!dir.exists(dirName)) dir.create(dirName)
+
+fileName <- paste0(dirName, "racmoD_shelfwide_", funVarName, "-dt06.json")
+
+domR::save_list(toSave, filename = fileName)
+domR::cat_list(toSave$info)
+```

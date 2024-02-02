@@ -1,0 +1,11 @@
+project:
+  output-dir: Reports/
+  execute-dir: project
+  
+author: "Dominic Saunderson"
+affiliation: "MISI | EAE | SAEF"
+date: now
+date-format: "Do MMMM YYYY ( HH:mm )"
+
+format: 
+  pdf

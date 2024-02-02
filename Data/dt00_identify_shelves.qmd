@@ -1,14 +1,20 @@
 ---
 title: dt00_identify_shelves.qmd
 abstract: |
-  The purpose of this notebook is to identify which ice shelves to analyse.
-  We use ice shelves meeting the following criteria:
-    - in East Antarctica
-    - at least 2 RACMO pixels are > 50 % ice shelf, according to MEaSURES
-  This gives 27 ice shelves, and excludes the smallest shelves that don't align 
-  well with the RACMO grid.
-  The MEaSURES data is from Mouginot et al. (2017).
-  The RACMO data is from van Dalum et al. (2021).
+  The purpose of this notebook is to identify which ice shelves are suitable for
+  analysis.
+  
+  We only use ice shelves meeting the following criteria:
+    - they are in East Antarctica
+    - they contain at least 2 RACMO pixels that are each > 50 % ice shelf 
+  
+  These criteria give 27 ice shelves, and exclude the smallest shelves that 
+  don't align well with the RACMO grid.
+  
+  Data
+  ----
+  Ice shelves are defined using the MEaSURES dataset (V2; Mouginot et al., 2017).
+  The RACMO data is from van Dalum et al. (2021), and uses 27 x 27 km pixels.
 ---
 
 # Data Prep & Set-Up

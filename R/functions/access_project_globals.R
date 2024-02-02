@@ -1,14 +1,16 @@
-access_project_globals <- function(){
+access_project_globals <- function(refresh = FALSE){
   #' Provides variables that are necessary throughout the project
   #'
   #' @description There are a number of variables that are required by multiple
   #'   functions or notebooks; this functions provides them. So that it doesn't
   #'   repeatedly need to create things, it creates a list containing the output
   #'   in the global environment (pToken).
-  #'   
+  #'
+  #' @param refresh BINARY: Should the guard be overruled and this function run 
+  #'   again?
   
   # Code -----------------------------------------------------------------------
-  if (isTRUE(exists("pToken", envir = .GlobalEnv))) {
+  if (isTRUE(exists("pToken", envir = .GlobalEnv)) & isFALSE(refresh)) {
     token <- .GlobalEnv$pToken
   } else {
     # Ice Shelves
@@ -21,6 +23,16 @@ access_project_globals <- function(){
                  "Totten", "Moscow_University", "Holmes", 
                  "Mertz", "Ninnis", "Cook", "Rennick", 
                  "Mariner", "Nansen", "Drygalski")
+    
+    shelfTitles <- c("Brunt", "R.-Larsen", 
+                    "Ekstrom", "Atka", "Jelbart",
+                    "Fimbul", "Vigrid", "Nivl", "Lazarev", 
+                    "B'grevik", "Baudouin", "Pr. Harald", 
+                    "Amery", 
+                    "West", "Shackleton", "Tracy T.", "Conger", 
+                    "Totten", "Moscow U.", "Holmes", 
+                    "Mertz", "Ninnis", "Cook", "Rennick",
+                    "Mariner", "Nansen", "Drygalski")
     
     shelfInitials <- c("BS", "RL", 
                        "Ek", "At", "Jb", 
@@ -43,7 +55,7 @@ access_project_globals <- function(){
     varWind <- c("w10m", "v10m", "u10m")
     varMass <- c("smb", "precip", "sndiv", "subl", 
                  "totwat", "refreeze", "runoff", 
-                 "snowmelt", "meltsur", "meltin")
+                 "snowmelt", "meltsur", "meltin", "melt")
     varEnergy <- c("seb", "turb", "radi",
                    "swsn", "swsd", "swsu",
                    "lwsn", "lwsd", "lwsu",
@@ -55,7 +67,7 @@ access_project_globals <- function(){
                      "lwsn", "lwsu", "lwsd",
                      "seb", "radi", "turb",
                      "latf", "senf", "gbot",
-                     "snowmelt", "meltsur", "meltin",
+                     "snowmelt", "meltsur", "meltin", "melt",
                      "totwat", "refreeze", "runoff", 
                      "smb", "precip", "sndiv", "subl")
     
@@ -67,6 +79,7 @@ access_project_globals <- function(){
     # Create a list to store
     token <- list("shelves" = shelves,
                   "initials" = shelfInitials,
+                  "shelfTitles" = shelfTitles,
                   "varMeanable" = varMeanable,
                   "varSummable" = varSummable,
                   "varRACMO" = varRACMO,

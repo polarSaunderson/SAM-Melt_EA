@@ -16,7 +16,7 @@
 u_user <- "polarSaunderson"
 
 # Load Personal Packages #######################################################
-# These must have been installed from GitHub
+# These must have already been installed from GitHub
 library(domR)
 library(kulaR)
 library(figuR)

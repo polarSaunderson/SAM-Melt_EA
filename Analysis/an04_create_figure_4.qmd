@@ -2,16 +2,23 @@
 title: an04_create_figure_4.qmd
 abstract: |
   The purpose of this notebook is to create Figure 4 in the GRL manuscript.
-  Figure 4 plots different melt variables through a melt season, and / or their 
-  correlation with the NOAA CPC daily SAM index.
+  Figure 4 consists of 4 panels based on daily data through a melt season:
+    a) SAM-Melt Correlation
+    b) Melt Climatology
+    c) SAM-Melt Lagged Correlation (i.e. melt with SAM from 28-days before)
+    d) Albedo Climatology
   
-  !! This notebook requires output from dt07 (which requires output from dt06).
+  !! This notebook requires output from dt07 (which requires output from dt06);
+  it is necesssary to have run dt07 for "snowmelt" and "albd".
   
-  The values shown are the climatology (1980-2018) of the shelfwide-averages.
-  Varirables are smoothed using a running mean (defined in dt06).
+  The values in a) and c) are correlations using the NOAA CPC daily SAM index.
+  The values in b) and d) are the climatology (i.e. mean of 1980-2018) of the 
+  shelfwide-average value. Variables are smoothed with a running mean (defined 
+  in dt07 - the windowLength parameter must have match one used in dt07).
+   
+  The melt and albedo data are daily output from RACMO2.3p3, shared by co-author
+  Christiaan van Dalum (see van Dalum et al. (2022) in The Cryosphere).
   
-  The daily RACMO data has been shared by co-author Christiaan van Dalum.
-  It is output from RACMO2.3p3 (van Dalum et al. (2022) in The Cryosphere).
 params:
   windowLength: 9
 ---
@@ -33,30 +40,32 @@ dirPath  <- "Data/racmoD_running_means/racmoD_running_9/"
 
 # Read in the data
 # for panel a
-kubud$snowmelt$koral <- domR::read_list(paste0(dirPath, 
-        "racmoD_noaaKoral_runningMean9_snowmelt-dt07.json")) |>
-  _$koralCubud$snowmelt_9$regionalMeans
+aa <- domR::read_list(paste0(dirPath, 
+                             "racmoD_noaaKoral_runningMean9_snowmelt-dt07.json"))
+kubud$snowmelt$koral <- aa$koralCubud$snowmelt_9$regionalMeans
 
 # for panel b
-kubud$snowmelt$klimaM <- domR::read_list(paste0(dirPath, 
-        "racmoD_klima_runningMean9_snowmelt-dt07.json")) |> 
-  _$snowmelt_9$regionalMeans$klimaMean                          
+bb <- domR::read_list(paste0(dirPath, 
+                             "racmoD_klima_runningMean9_snowmelt-dt07.json"))
+kubud$snowmelt$klimaM <-  bb$snowmelt_9$regionalMeans$klimaMean                          
 
 # for panel c
-kubud$snowmelt$lagKaw <- domR::read_list(paste0(dirPath, 
-        "racmoD_noaaKoral_lag_28_runningMean9_snowmelt-dt07.json")) |>
-  _$lagCubud$snowmelt_9_lag_28$regionalMeans
+cc <- domR::read_list(paste0(dirPath, 
+                             "racmoD_noaaKoral_lag_28_runningMean9_snowmelt-dt07.json"))
+kubud$snowmelt$lagKaw <- cc$lagCubud$snowmelt_9_lag_28$regionalMeans
 
 # for panel d
-kubud$albd$klimaM <- domR::read_list(paste0(dirPath,
-        "racmoD_klima_runningMean9_albd-dt07.json")) |>
-  _$albd_9$regionalMeans$klimaMean
+dd <- domR::read_list(paste0(dirPath,
+                             "racmoD_klima_runningMean9_albd-dt07.json"))
+kubud$albd$klimaM <- dd$albd_9$regionalMeans$klimaMean
 ```
 
 # Prep =========================================================================
 We'll prepare the separate plots in distinct chunks as functions and then call 
 them together in the pdf chunk. It keeps it a little tidier to track rather than
 a lot of endless scrolling.
+
+## Functions & Regions
 ```{r}
 # Regions & dates in the data
 incRegions <- c("Weddell", "DML", "Amery", "Wilkes")
@@ -74,7 +83,7 @@ kulaN <- c(kulaR::kulaL(4, 10), kulaR::kulaK("okabeitoblack", 8, c(3, 4, 7)))
 # Functions repeated on multiple panels
 add_monthly_lines <- function() {
   # Monthly Lines
-  abline(v = c(31, 62, 91), col = kulaL(4))
+  abline(v = c(31, 62, 93), col = kulaL(4))
   abline(h = 0, col = kulaL(8, 10), lwd = 2)
 }
 
@@ -127,6 +136,13 @@ plot_panel_a <- function() {
   }
   
   figuR::add_plot_frame()
+  
+  # Add arrow
+  text(x = 127, xpd = TRUE, y = -0.4, cex = 0.8, col = kulaL(5),
+       srt = 270, "Stronger Negative\nCorrelation")
+  arrows(x0 = 123, y0 = -0.05, col = kulaL(5),
+         x1 = 123, y1 = -0.75,
+         lwd = 1.75, xpd = TRUE, length = 0.1)  # length of the arrow head
 }
 plot_panel_a()
 ```
@@ -140,7 +156,7 @@ plot_panel_b <- function() {
                   xLabels = ndjfDates, xLabelEvery = 10, xLabelFirst = 1,
                   xLabelKula = "white",        # hide labels on this panel
 
-                  yName = prep_racmo_names("snowmelt", monthlyData = FALSE,
+                  yName = prep_racmo_names("melt", monthlyData = FALSE,
                                            originalUnits =  FALSE),
                   yAxisSide = 4,
                   yNameCex = 1.1, yNameOffset = 1.75,
@@ -167,7 +183,6 @@ plot_panel_b <- function() {
           col = jjKula, lwd = 3)
   }
   
-  figuR::add_plot_frame()
 }
 plot_panel_b()
 ```
@@ -215,7 +230,15 @@ plot_panel_c <- function() {
   }
 
   figuR::add_plot_frame()
+  
+  # Add arrow
+  text(x = 127, xpd = TRUE, y = -0.4, cex = 0.8, col = kulaL(5),
+       srt = 270, "Stronger Negative\nCorrelation")
+  arrows(x0 = 123, y0 = -0.05, col = kulaL(5),
+         x1 = 123, y1 = -0.75,
+         lwd = 1.75, xpd = TRUE, length = 0.1)  # length of the arrow head
 }
+
 plot_panel_c()
 ```
 
@@ -236,9 +259,7 @@ plot_panel_d <- function() {
                   yAxisSide = 4, 
                   yLabelCex = 0.85,
                   
-                  yTickBoth = TRUE,
-                  
-                  tagText = "d)", tagCex = 1.5)
+                  yTickBoth = TRUE)
   
   # Useful Delineations
   add_monthly_lines()
@@ -255,6 +276,8 @@ plot_panel_d <- function() {
     lines(1:120, jjData,
           col = jjKula, lwd = 3)
   }
+  
+  text(x = 4.25, y = 0.868, "d)", cex = 1.5)
 
   figuR::add_plot_frame()
 }
@@ -267,7 +290,7 @@ plot_panel_d()
 if (!exists("vv")) vv <- 0
 vv <- vv + 1
 
-fileName <- paste0(figPath, "fig04v", sprintf("%02d", vv), "_dailyPlots.pdf")
+fileName <- paste0(figPath, "fig04_v", sprintf("%02d", vv), "_dailyPlots.pdf")
 pdf(fileName, height = 10, width = 9)
 
 # The plots!
@@ -283,8 +306,10 @@ plot_panel_d()
 # Add legend
 legend("bottomleft",
        inset = c(0.005, 0.0175),
-       c("Weddell", "Dronning Maud Land", "Amery", "Wilkes"), 
-       bg = "white",
-       horiz = TRUE, text.width = NA,
-       col = kulaN, lwd = 3, cex = 0.85)
+       c("Weddell", "Dronning Maud Land", "Amery", "Wilkes"),
+       col = kulaN,
+       bg = "white", 
+       horiz = TRUE,
+       text.width = NA,
+       lwd = 3, cex = 0.825)
 ```

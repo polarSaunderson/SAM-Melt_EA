@@ -4,13 +4,15 @@ draw_racmo_axes <- function(x = "",
                             lineKula = kulaL(4),
                             interval = NULL,
                             tickLength = -0.25) {
-  #' DO NOT USE THIS BEYOND THIS PROJECT!!! IT FAILS MANY TESTS & IS IN PROGRESS
-  #' Add a tighter border of axes around Antarctic RACMO plots
+  #' DO NOT USE BEYOND THIS PROJECT!!! It fails most tests!
   #'
   #' @description The default terra borders for Antarctica leave a lot of white
   #'   space around the continent. This function draws axes that are tighter to
   #'   the coastline of the raster. This function should be called straight
   #'   after using terra::plot(x, axes = FALSE).
+  #'   
+  #'   Because this is in progress, this is essentially a horrifically 
+  #'   over-engineered solution to adding a border on Figure 1.
   #'
   #' @param x SpatRaster: Which data has been plotted? Supply the SpatRaster to
   #'   correctly align the axes with the extent; if an empty string is supplied,

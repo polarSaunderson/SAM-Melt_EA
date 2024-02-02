@@ -9,16 +9,16 @@ abstract: |
       panel d) running, EA-wide SAM-melt correlations
       panel e) shelf-based SAM-melt correlations
   !! The melt data must have already been prepared in dt02.
-  !! The correlation plots use both the NOAA CPC and Marshall 2003 SAM indices.
+  The correlation plots use both the NOAA CPC and Marshall 2003 SAM indices.
 ---
 
-# Data Prep & Set-Up
+# Data Prep & Set-Up ===========================================================
 ```{r}
 ## Run set-up scripts ----------------------------------------------------------
 source("R/su01_set_up.R")
 ```
 
-## Load RACMO Data
+## Load RACMO Data -------------------------------------------------------------
 Requires the output from dt02, which is an R list serialised as json.
 ```{r}
 # Read in data
@@ -32,11 +32,12 @@ dj   <- dj[which(names(dj) != "EA-Wide")]
 peak <- ((dj / ndjf) * 100) |> round(1)
 ```
 
-## Prepare Melt Percentile Data (for plot c)
+## Prepare Melt Percentile Data (for plot c) -----------------------------------
 We'll plot the data as percentiles to help compare between shelves in a summer.
 The percentiles indicate how many summers are at or below the percentile value.
 We plot the min, max and median as the 0, 100 and 50th percentiles.
 The others will then be plotted between them.
+This is based on the DJ values.
 
 ```{r}
 zDJ <- dj * NA
@@ -66,7 +67,7 @@ figuR::plot_lines(sort(zDJ$Shackleton),
                   xName = "Ascending Values")
 ```
 
-## Prepare Climate Indices (for panels a & b)
+## Prepare Climate Indices (for panels a & b) ----------------------------------
 These are for panels a) and b), showing the interannual variability in SAM and
 ENSO.
 The ENSO data is downloaded directly from psl.
@@ -208,20 +209,21 @@ end <- domR::end_timer(start)
 ```
 
 # Plot Prep ====================================================================
-These plots and panels require quite a bit of preparation for the data, as well 
-as the plot customisation and alignment.
+These panels require quite a bit of preparation for the data and alignment.
 
 ## Prepare layout
 ```{r}
-panels <- figuR::arrange_panels(list(c(1, 4, 1, 73),         # panel a
-                                     c(5, 8, 1, 73),         # panel b
-                                     c(9, 82, 1, 73),        # panel c
-                                     c(83, 100, 1, 73),      # panel d
-                                     c(9, 82, 74, 100),      # panel e
-                                     c(83, 100, 74, 86),     # Legend
-                                     c(83, 100, 87, 93),     # colours 1
-                                     c(83, 100, 94, 100),    # colours 2
-                                     c(1, 8, 74, 100)))      # arrow up
+# taller than version 4.1
+panels <- figuR::arrange_panels(list(c(1, 4, 1, 68),         # panel a
+                                     c(5, 8, 1, 68),         # panel b
+                                     c(9, 82, 1, 68),        # panel c
+                                     c(83, 100, 1, 68),      # panel d
+                                     c(9, 82, 69, 100),      # panel e
+                                     c(83, 100, 69, 84),     # Legend
+                                     c(83, 100, 85, 92),     # colours 1
+                                     c(83, 100, 93, 100),    # colours 2
+                                     c(1, 8, 69, 100)))      # arrow up
+
 layout.show(9)
 ```
 
@@ -301,6 +303,7 @@ plot_panel_b <- function() {
 }
 plot_panel_b()
 ```
+
 ## Panel c
 ```{r}
 plot_panel_c <- function() {
@@ -314,7 +317,8 @@ plot_panel_c <- function() {
                            yLabels = 1980:2018, yLabelFirst = 1, yLabelEvery = 5,
                            yAlignMidPoints = TRUE,
                      
-                           xLabels = pToken$initials, xAlignMidPoints = TRUE,
+                           xLabels = rep("", length(pToken$initials)), 
+                           xAlignMidPoints = TRUE,
                            xLabelEvery = 1, xLabelSrt = 270, xLabelOffset = 1,
                      
                            xMarks = c(2, 12, 13, 20, 24),
@@ -334,7 +338,7 @@ plot_panel_c <- function() {
   y95[zPeak < 95] <- NA
   
   # Add the points
-  points(x = x95, y = y95, pch = 4, cex = 0.5, col = kulaR::kulaT(4, 4))
+  points(x = x95, y = y95, pch = 4, cex = 0.5, col = kulaR::kulaT(6, 5))
   
   # panel ID
   text(x = 0.0015, y = 0.992, "c)", cex = 1.5, adj  = c(0.5, 0.5))
@@ -459,12 +463,12 @@ plot_panel_d()
 ```{r}
 plot_panel_e <- function(){
   # prep -----------------------------------------------------------------------
-  figuR::pre_plot(mar = c(0.35, 2.55, 2, 0.25),
+  figuR::pre_plot(mar = c(0.35, 2.55, 4.25, 0.25),
                   
                   xLimits = c(0.5, 27.5), xAlignMidPoints = TRUE, xAxisSide = 3, 
-                  xLabels = pToken$initials, xLabelEvery = 1,
+                  xLabels = pToken$shelfTitles, xLabelEvery = 1,
                   xLabelKula = kulaR::kulaL(4), xLabelCex = 0.88, 
-                  xLabelOffset = 1.05,
+                  xLabelOffset = 2.25,
                   xLabelSrt = 270,
                   xTickBoth = FALSE, xTickLength = 0.15,
                   
@@ -485,8 +489,6 @@ plot_panel_e <- function(){
                   labelEvery = c(3, 13, 14, 21, 25, 28), 
                   labelKula = "#000000", tickLength = 0,
                   gridKula = "black", gridLwd = 1)
-  lines(x = c(6.5, 6.5), c(0, -0.9),              # semi-delineation for DML
-        col = kulaR::kulaL(4))  
   
   # Add critical r values (at p = 0.05 & = 0.01 for 37 df) ---------------------
   abline(h = c(-0.3246, -0.4182),
@@ -600,9 +602,9 @@ plot_kulaBars <- function() {
   # Climate Indices
   kulaR::add_kulaBar(kula = klimaKulas, 
                      range = c(-2.5, 2.5),
-                     mar = c(2, 1, 1, 0.5), 
+                     mar = c(2, 0.85, 1.5, 0.65), 
                      name = "Climate Indices",
-                     nameSide = 3, nameOffset = 0.5,
+                     nameSide = 3, nameOffset = 1.1,
                      nameCex = 1,
                      labelEvery = 2, labelFirst = 2,
                      labelCex = 0.85, labelOffset = 0.5)
@@ -616,16 +618,16 @@ plot_kulaBars <- function() {
   # Melt Percentiles
   kulaR::add_kulaBar(kula = mBarKulas,     # this is a trick for uneven bars
                      range = c(1, 79),     # 79 allows centred median (39 + 39 + 1)
-                     labels = kLabels,
-                     labelEvery = 1, 
-                     tickEvery = toTick,
-                     labelCex = 0.75,
-                     labelOffset = 0.6,
-
-                     mar = c(2, 1, 1, 0.5), 
+                     mar = c(2, 0.85, 1.5, 0.65), 
+                     
                      name = "Melt Percentiles",
-                     nameOffset = 0.5,
-                     nameSide = 3)
+                     nameSide = 3, nameOffset = 1.1, 
+                     nameCex = 1,
+                     
+                     labelEvery = 1, tickEvery = toTick,
+                     labels = kLabels,
+                     labelCex = 0.75, labelOffset = 0.6)
+
 }  
 par(mfrow = c(2, 1))
 plot_kulaBars()
@@ -636,13 +638,13 @@ plot_kulaBars()
 plot_bottom_left <- function() {
   # create a dummy plot area to help alignment
   figuR::pre_plot(xLimits = c(-10, 10), yLimits = c(0.1, -0.9),
-                  mar = c(0.35, 0, 2, 0),
+                  mar = c(0.35, 0, 2.75, 0),
                   addOrigin = FALSE,
                   gridKula = kulaR::kulaT(0),
                   axisKula = "white",
                   tickKula = kulaR::kulaT(0))
   arrows(x0 = 7.5, y0 = -0.05, 
-         x1 = 7.5, y1 = -0.825,
+         x1 = 7.5, y1 = -0.8125,
          lwd = 2, xpd = TRUE)
   text(x = 1, y = -0.4, "Stronger Negative\n SAM-Melt Correlation", 
      xpd = TRUE, cex = 1, srt = 90)
@@ -658,8 +660,9 @@ plot_bottom_left()
 if (!exists("vv")) vv <- 0
 vv <- vv + 1
 
-pdf(paste0(figPath, "fig02v", sprintf("%02d", vv), "_stripeCorrelations.pdf"), 
-    width = 12, height = 12)
+pdfPath <- paste0("fig02_v", sprintf("%02d", vv), "_spacetime_correlations.pdf")
+
+pdf(paste0(figPath, pdfPath), width = 12, height = 12.5)
 
 # arrange
 layout(panels)
@@ -675,5 +678,5 @@ plot_legends()
 plot_kulaBars()
 plot_bottom_left()
 
-domR::cat_list(domR::get_metadata())
+domR::cat_list(domR::get_metadata(), name = pdfPath)
 ```

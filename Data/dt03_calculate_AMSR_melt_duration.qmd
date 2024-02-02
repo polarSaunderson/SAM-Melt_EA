@@ -2,22 +2,25 @@
 title: dt03_calculate_AMSR_melt_duration.qmd
 abstract: |
   The purpose of this notebook is to create monthly maps of satellite-observed 
-  melt duration (i.e. number of melt days each month).
+  melt duration (i.e. the number of melt days each month).
   
-  We use the daily AMSR datasets from Picard (2022), with a spatial resolution 
-  of 12.5 km, and available from 2002/03--2020/21.
+  We use the daily AMSR datasets of Picard (2022), with a spatial resolution 
+  of 12.5 km, which are available from 2002/03--2020/21.
+  
   We simply read the melt data (binary melt / no-melt flags) for a single month, 
   and then sum the number of melt days for each pixel in that month each summer 
   before saving it all as a NetCDF.
-  The output is therefore a NetCDF that contains the melt duration for every 
-  (e.g.) December, with each layer storing the (e.g.) December melt duration for
-  a single summer.
   
-  !! You must download the AMSR datasets first, available here:
+  The output is therefore a NetCDF that contains the melt duration for every 
+  (e.g.) December, with each layer storing the December melt duration for a 
+  single summer.
+  
+  ! You must first download the AMSR datasets, available here:
     https://doi.org/10.18709/PERSCIDO.2022.09.DS376
   
-  !! Set the relative path to the AMSR data folder from your current working 
+  ! Set the relative path to the AMSR data folder from your current working 
   directory
+
 params:
   month: Dec
   amsrPath: "../../Data/PicardMelt/melt-AMSR-Antarctic/"
@@ -50,7 +53,7 @@ terra::ext(amsr) <- terra::ext(c(-2981250, 2793750, -2393750, 2631250))
 # actually on the EPSG:3031 grid for the Southern Hemisphere.
 
 # Verify that the data lines up
-tstImage <- terra::subset(amsr, 300) # a day in the 1st melt season (2003-01-25)
+tstImage <- terra::subset(amsr, 300) # random day in the 1st summer (2003-01-25)
 terra::plot(tstImage)
 polarcm::draw_antarctica(crs = "EPSG:3031")
 
@@ -75,7 +78,7 @@ polarcm::draw_antarctica(crs = "EPSG:3031")
 # Count melt days each summer ==================================================
 ## Prep
 ```{r}
-# Prep data - we only want data for a single month (too slow otherwise)
+# Prep data - we only want data for a single month (it's too slow otherwise)
 subMonth  <- handle_months(params$month)
 xData     <- terrapin::subset_by_month(x = amsr, months = subMonth,
                                        excludeIncomplete = 3, 
@@ -85,7 +88,7 @@ xList     <- list()
 ```
 
 ## Count
-This can take up to 5-10 minutes for a single month, depending on the machine.
+This can easily take 2-10 minutes for a single month, depending on the machine.
 ```{r}
 # Loop through each summer
 start <- domR::start_timer("Counting melt days in", params$month)
@@ -122,10 +125,8 @@ xDuration <- terra::flip(xDuration)   # !! comment out if no need to flip !!
 # Even though we have based things on summer, we need to use the year here.
 # We will add the date as the year-month-15.
 years <- switch(terrapin::handle_months(params$month, "Jan"),
-                "Jan" = ,
-                "Feb" = ,
-                "Mar" = xSummers,
-                xSummers - 1)
+                "Jan" = , "Feb" = , "Mar" = xSummers,
+                xSummers - 1)    # if not Jan, Feb or Mar
 
 # Use a real date format for terra, not my string representations
 layerDates <- as.Date(paste0(years, "-", params$month, "-15"), "%Y-%b-%d")
@@ -134,7 +135,7 @@ terra::time(xDuration) <- layerDates
 
 # Save as a NetCDF
 ```{r}
-# Check & create directory
+# Check for & create directory
 dirName <- "Data/amsr_melt_duration/"
 if (!dir.exists(dirName)) dir.create(dirName)
 
@@ -142,7 +143,8 @@ if (!dir.exists(dirName)) dir.create(dirName)
 fileName <- paste0(dirName, paste("amsr", params$month, 
                                   "melt_duration-dt03.nc", sep = "_"))
 
-blurb <- paste("Sum of AMSR", params$month, "melt days in a summer. Original",
+blurb <- paste("Sum of AMSR melt days in", 
+               handle_months(params$month, "January"), "each summer. Original",
                "melt data is a binary distinction between melt and non-melt",
                "days from the Picard (2022) dataset available at:",
                "doi.org/10.18709/PERSCIDO.2022.09.DS376.")
@@ -160,7 +162,7 @@ terra::writeCDF(x = xDuration,
                                   "AMSR melt days each summer"))
 domR::print_on_saving(fileName)
 ```
-
+## Check metadata
 ```{r}
 metaData <- get_metadata(blurb = blurb)
 domR::cat_list(metaData)

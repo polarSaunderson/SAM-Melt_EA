@@ -1,7 +1,7 @@
 ---
 title: an07_create_figures_s5_s6_s7.qmd
 abstract: |
-  The purpose of this notebook is to create supplementary figures S5, S6 and S7.
+  The purpose of this notebook is to create Supplementary Figures S5, S6 and S7.
   These are different melt-related climate variables from RACMO through the melt
   season, using daily resolution model output.
   
@@ -24,25 +24,25 @@ abstract: |
   plots in the manuscript and supplementary use a windowLength of 9.
     
   For Figure S5:
+    racmoVars: ["albd", "t2m", "swsd", "lwsd"]
+    plotType:  ["mean", "mean", "mean", "mean"]
     figName:   "S5"
-    racmoVars: ["swsd", "t2m", "lwsd"]
-    plotType:  ["mean", "mean", "mean"]
       
   For Figure S6:
-    figName:   "S6"
     racmoVars: ["albd", "t2m", "swsd", "lwsd"]
     plotType:  ["koral", "koral", "koral", "koral"]
+    figName:   "S6"
   
   For Figure S7:
-    figName:   "S7"
-    racmoVars: ["albd", "swsd", "t2m", "lwsd"]
+    racmoVars: ["albd", "t2m", "swsd", "lwsd"]
     plotType:  ["stdev", "stdev", "stdev", "stdev"]
+    figName:   "S7"
       
 params:
-  figName:   "S5"
-  racmoVars: ["swsd", "t2m", "lwsd"]
-  plotType:  ["mean", "mean", "mean"]
-  windowLength: 9
+    windowLength: 9
+    racmoVars: ["albd", "t2m", "swsd", "lwsd"]
+    plotType:  ["mean", "mean", "mean", "mean"]
+    figName:   "S5"
 ---
 
 # Data Prep & Set-Up
@@ -50,6 +50,7 @@ params:
 ## Run set-up scripts ----------------------------------------------------------
 source("R/su01_set_up.R")
 ```
+
 ## Prep Set-Up
 ```{r}
 # Dates for the x-axis labels
@@ -95,15 +96,15 @@ for (ii in 1:varCount) {
 
   # Read in the correct data
   if (iiType %in% c("mean", "stdev")) {
-    iiData <- paste0(klimaPath, iiVar, "-dt07.json") |>
-      domR::read_list() |>
-      _[[iiWinType]]$regionalMeans
+    iiData1 <- paste0(klimaPath, iiVar, "-dt07.json") |>
+      domR::read_list()
+    iiData <- iiData1[[iiWinType]]$regionalMeans
     if (iiType == "mean") iiData <- iiData$klimaMean
     if (iiType == "stdev") iiData <- iiData$klimaSD
   } else if (iiType == "koral") {
-    iiData <- paste0(koralPath, iiVar, "-dt07.json") |>
-      domR::read_list() |>
-      _$koralCubud[[iiWinType]]$regionalMeans
+    iiData1 <- paste0(koralPath, iiVar, "-dt07.json") |>
+      domR::read_list()
+    iiData <- iiData1$koralCubud[[iiWinType]]$regionalMeans
   } else {
     stop("set params plotType as 'mean', 'stdev' or 'koral'")
   }
@@ -115,7 +116,7 @@ for (ii in 1:varCount) {
 
 ## Plot Names
 Do NOT try to use the `prep_racmo_names` function beyond this chunk.
-It works here, but it is very unconstrained - the results can easily be wrong.
+It works here, but it is not well constrained - the results easily go wrong.
 ```{r}
 # Preallocate
 nameList <- list()
@@ -205,7 +206,7 @@ plot_it <- function(iiData, iiType, ii, iiName) {
                   tagCex = 1.5)
   
   # Monthly delineations
-  abline(v = c(31, 62, 91), col = kulaL(4))
+  abline(v = c(31, 62, 93), col = kulaL(4))
   
   # Statistical significance lines/shaded polygon for correlation plots
   if (iiType == "koral") {
@@ -225,13 +226,21 @@ plot_it <- function(iiData, iiType, ii, iiName) {
   
   # Add a legend to the last panel
   if (ii == 1) {
+    if (params$figName == "S7") {
+      legPos <- "bottomright"
+    } else {
+      legPos <- "bottomleft"
+    }
+
     # Legend
-    legend("bottomleft", text.width = NA,
-           inset = c(0.005, 0.02),
+    legend(legPos, text.width = NA,
+           inset = c(0.005, 0.0175),
+           # inset = c(0.005, 0.02),
            c("Weddell", "Dronning Maud Land", "Amery", "Wilkes"), 
            bg = "white",
            col = kulaN[1:ncol(iiData)], 
-           lwd = 3, horiz = TRUE, cex = 0.82)
+           lwd = 3, horiz = TRUE, 
+           cex = 0.825)
   }
 }
 ```
@@ -243,7 +252,7 @@ if (!exists("vv")) vv <- 0
 vv <- vv + 1
 
 fileName <- paste0(figPath, "fig", params$figName,
-                   "v", sprintf("%02d", vv), 
+                   "_v", sprintf("%02d", vv), 
                    "_dailyPlots.pdf")
 
 pdf(fileName, height = 2.5 * varCount, width = 9)

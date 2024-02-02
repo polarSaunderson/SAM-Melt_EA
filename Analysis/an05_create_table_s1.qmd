@@ -1,13 +1,12 @@
 ---
 title: an05_create_table_s1.qmd
 abstract: |
-  The purpose of this notebook is to create the supplementary Table S1.
+  The purpose of this notebook is to create Supplementary Table S1.
   The table presents an overview of the included ice shelves.
   The ice shelves are defined in dt00.
+  The table requires data output created in dt02 and dt04.
   At the end of this notebook, the table is saved as a csv and then slightly
   "formatted" in Excel.
-  
-  !! The table requires data output created in dt02 and dt04.
 ---
 
 # Data Prep & Set-Up
@@ -20,7 +19,7 @@ source("R/su01_set_up.R")
 ```{r}
 # Prep
 shelfCount  <- length(pToken$shelves)
-columnNames <- c("Name", "Abbreviation",
+columnNames <- c("Name",
                  "Region", 
                  "Area", "Pixels",
                  "Median (NDJF)", "Median (DJ)",
@@ -29,7 +28,7 @@ columnNames <- c("Name", "Abbreviation",
                  "Regression")
 
 # Preallocate
-shelfTable <- matrix(NA, ncol = 11, nrow = shelfCount) |>
+shelfTable <- matrix(NA, ncol = length(columnNames), nrow = shelfCount) |>
   `colnames<-`(columnNames) |>
   `row.names<-`(pToken$shelves) |>
   as.data.frame()

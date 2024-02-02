@@ -1,11 +1,12 @@
 ---
 title: dt01_derive_racmo_data.qmd
 abstract: |
-  The purpose of this notebook is to derive RACMO variables from the raw input.
-  For example, the incoming and outgoing shortwave radiation are both available,
-  and these can be used to derive the surface albedo.
+  The purpose of this notebook is to derive additional RACMO variables from the 
+  raw input. For example, the incoming and outgoing shortwave radiation can be 
+  used to derive the surface albedo, and the eastward and northward winds can be
+  used to derive the absolute wind speeds.
   
-  The variables that can be derived are:
+  This notebook is set up to derive 7 additional variables:
     - seb       Net Surface Energy Balance = lwsd + swsd + senf + lwsu + swsu + 
                                               latf + gbot 
     - radi      Net radiative fluxes       = lwsd + swsd + lwsu + swsu
@@ -22,10 +23,12 @@ abstract: |
     2) Run whichever chunks after that which you want the output from! All of 
        the above 7 derived variables are used in the monthly plots in the GRL 
        manuscript (or in the supplement).
-    3) The daily data can also be derived, but is much, much slower. It may also
+    3) The daily data can also be derived, but is much, much slower (it can 
+       easily take 10-30 minutes for a single decade of a variable). It may also
        require that each decade is run separately to prevent memory issues. See
        the "Create racmoD NetCDFs" section (on line 339) for more detail on how
-       the daily data works.
+       the daily data works. Only the swsn and albd variables are used in the
+       manuscript or supplementary.
 
 params:
   version: rp3
@@ -38,27 +41,33 @@ source("R/su01_set_up.R")
 ```
 
 ## Define useful local functions
-These are used for all of the variables so define them here first, just once.
+These functions are necessary for all variables so define them here first, so 
+we'll them here.
 ```{r}
-## Creating the NetCDFs is slow, so we don't want to do it if it is unnecessary.
-## If it already exists, a prompt appears to confirm whether the data should be
-## overwritten.
+## -----------------------------------------------------------------------------
+# Creating the NetCDFs is slow, so we don't want to do it if it is unnecessary.
+# If the NetCDF already exists, a prompt appears to confirm whether the data 
+# should be overwritten.
 guard_against_existing <- function(racmoVar = params$racmoVar, 
                                    version  = params$version,
                                    resolution = "monthly") {
+  # Which variables exist?
   existingVars <- switch(resolution, 
                         "daily"   = polarcm::list_racmoD_variables(print = FALSE),
                         "monthly" = polarcm::list_racmoM_variables(print = FALSE))
   existingVars <- existingVars[[version]]
 
+  # Warn if the requested variable already exists
   if (racmoVar %in% existingVars) {
     cat("\n\n")
     warning(paste(version, racmoVar, "data already exists!\n"))
   
+    # Get user input
     userAgrees <- askYesNo(msg = paste("Do you want to overwrite the existing", 
-                                       version,
-                                       racmoVar, "data?"), 
+                                       version, racmoVar, "data?"), 
                            default = FALSE)
+    
+    # Depends on user response
     if (isFALSE(userAgrees) | is.na(userAgrees)) {
       warning("Data will NOT be overwritten.\n")
       cat(paste("Existing", version, "variables:\n"), existingVars, "\n")
@@ -74,7 +83,8 @@ guard_against_existing <- function(racmoVar = params$racmoVar,
 create_new_racmoM_filename <- function(racmoVar) {
   token <- polarcm::configure_polarcm()
   
-  # Filename depends on whether the value is averaged (wind, albedo) or summed
+  # Filename depends on whether the value is averaged (monthA; w10m, albd) or 
+  # summed (monthS; radi, turb, swsn, lwsn, seb)
   if (racmoVar %in% c("w10m", "albd")) {
     path <- token$varPaths$racmoM[[params$version]]$u10m
     path <- gsub(pattern = "u10m", replacement = racmoVar, x = path)
@@ -351,7 +361,7 @@ the "proceed" line in a chunk to overrule the guard.
 ## Albedo: albd ----------------------------------------------------------------
 ```{r}
 # Change this to calculate only a single decadal file at once
-iiCount <- 1:5
+iiCount <- 1 # 1 is much quicker than 2, 3, 4 or 5; try a loop (1:5) if you dare
 
 # Guard
 proceed <- guard_against_existing(racmoVar = "albd", 
@@ -385,7 +395,7 @@ if (isTRUE(proceed)) {
     iiAlbd[iiAlbd > 1] <- NA        # rounding errors?
     iiAlbd[iiAlbd < 0] <- NA        # rounding errors?
     
-    end <- domR::end_timer(start, "Calculated albd", ii)
+    end <- domR::end_timer(start, "albd", ii)
     
     # Metadata for the NetCDF
     units     <- rep(".", terra::nlyr(iiAlbd)) # albedo is unitless
@@ -403,11 +413,11 @@ if (isTRUE(proceed)) {
                     varname   = varNames,
                     longname  = longnames,
                     atts = domR::get_metadata(format = "NetCDF"))
-    domR::cat3("Saved successfully! \n", filePath, nStart = 0)
+    domR::print_on_saving(filePath)
   }
 }  
 
-domR::print_on_saving(filePath)
+domR::cat3("Successfully calculated daily albd (", iiCount, ")! \n", nStart = 0)
 ```
 
 ## Net Shortwave Radiation: swsn -----------------------------------------------
@@ -461,9 +471,10 @@ if (isTRUE(proceed)) {
                     varname   = varNames,
                     longname  = longnames,
                     atts = domR::get_metadata(format = "NetCDF"))
-    domR::cat3("Saved successfully! \n", filePath, nStart = 0)
+    domR::print_on_saving(filePath)
   }
 }  
+domR::cat3("Successfully calculated daily swsn (", iiCount, ")! \n", nStart = 0)
 ```
 
 
@@ -518,9 +529,10 @@ if (isTRUE(proceed)) {
                     varname   = varNames,
                     longname  = longnames,
                     atts = domR::get_metadata(format = "NetCDF"))
-    domR::cat3("Saved successfully! \n", filePath, nStart = 0)
+    domR::print_on_saving(filePath)
   }
 }  
+domR::cat3("Successfully calculated daily lwsn (", iiCount, ")! \n", nStart = 0)
 ```
 
 ## Net Turbulent Fluxes: turb --------------------------------------------------
@@ -574,9 +586,10 @@ if (isTRUE(proceed)) {
                     varname   = varNames,
                     longname  = longnames,
                     atts = domR::get_metadata(format = "NetCDF"))
-    domR::cat3("Saved successfully! \n", filePath, nStart = 0)
+    domR::print_on_saving(filePath)
   }
 }  
+domR::cat3("Successfully calculated daily turb (", iiCount, ")! \n", nStart = 0)
 ```
 
 ## Net Radiative Fluxes: radi --------------------------------------------------
@@ -634,7 +647,8 @@ if (isTRUE(proceed)) {
                     varname   = varNames,
                     longname  = longnames,
                     atts = domR::get_metadata(format = "NetCDF"))
-    domR::cat3("Saved successfully! \n", filePath, nStart = 0)
+    domR::print_on_saving(filePath)
   }
 }  
+domR::cat3("Successfully calculated daily radi (", iiCount, ")! \n", nStart = 0)
 ```

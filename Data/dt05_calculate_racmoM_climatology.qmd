@@ -2,22 +2,13 @@
 title: dt05_calculate_racmoM_climatology.qmd
 abstract: |
   The purpose of this notebook is to calculate the climatology of the monthly 
-  RACMO or ERA5 variables.
+  RACMO or ERA5 variables. The RACMO data is from van Dalum et al. (2021); the 
+  ERA5 data needs to be downloaded from the CDS.
+  
   The NetCDFs output from this notebook are used in an03 to create Supplementary 
   Figures for the GRL manuscript.
   
-  The following RACMO variables can be used:
-    - snowmelt, albd, t2m;
-    - seb, radi, gbot;
-    - turb, latf, senf;
-    - swsd, swsu, swsn; 
-    - lwsd, lwsu, lwsn;
-    - w10m, u10m, v10m;
-    - smb, precip, sndiv, subl.
-    
-  !! The following variables can only be used if they've been derived in dt01:
-    - turb, radi, w10m, seb, albd, swsn, lwsn
-
+  The NetCDFs are calculated in a loop.
 params:
   months:  [12, 1]
   summers: !expr c(1980:2018)
@@ -42,7 +33,7 @@ klimaSum <- c("snowmelt", "precip",
 
 klimaVars <- c(klimaMean, klimaSum)
 
-# which months? Initials are used in metadata and filename
+# Which months? Initials are used in metadata and filename
 mInitials <- domR::get_initials(month.abb[params$months])
 ```
 
@@ -158,7 +149,7 @@ for (ii in klimaVars) {
   iiMean  <- terra::mean(iiData, na.rm = TRUE)
   iiStDev <- terra::stdev(iiData, na.rm = TRUE)
 
-  # Reproject ERA5 to RACMO (eases plotting in a loop in an03)
+  # Reproject ERA5 to RACMO (eases plotting in a for-loop in an03)
   # Ignore the warning, GDAL just has issues with the RACMO projection.
   if (ii %in% pToken$varERA5) {
     iiMean  <- terra::project(iiMean, polarcm::use_crs("racmo"))
@@ -166,7 +157,7 @@ for (ii in klimaVars) {
   }
   
   # Prep metadata --------------------------------------------------------------
-  blurb <- paste("The mean and standard deviation of the", mInitials, "values",
+  blurb <- paste("The mean and standard deviation of the", mInitials, ii, "data",
                  "each summer. Energy and mass fluxes are calculated as the",
                  "sum each summer (e.g. the total snowmelt over Dec & Jan); in",
                  "contrast, temperatures, albedo, winds and pressures use the",

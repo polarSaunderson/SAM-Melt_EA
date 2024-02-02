@@ -5,7 +5,7 @@ abstract: |
   It can also be used for Supplementary Figures 2, 3, and 4.
   
   !! This notebook requires the output from dt04 !! 
-  Run that first; here we just plot the data as a figure.
+  Run that first; here we just plot the data as a pretty figure.
   
   These figures show the RACMO climate variables regressed against the SAM.
   Regressions show the change in a variable for a unit decrease in the SAM.
@@ -14,8 +14,8 @@ abstract: |
   In these figures, we can plot:
     - "reg":    regression of the variable onto the SAM index
     - "r2":     coefficient of determination (r^2) of the regression
-    - "mean":   mean climatology of the RACMO variables
-    - "stdev":  stdev climatology of the RACMO variables
+    - "mean":   mean climatology of the RACMO variable
+    - "stdev":  standard deviation of the RACMO variable climatology
     
   For the supplementary figures, set the params accordingly.
   (w10m is absolute wind speed at 10m, v10m is southerly, u10m is westerly).
@@ -45,13 +45,13 @@ abstract: |
   Use months: "DJ" for both of the above; the samIndex makes no difference.
   
 params:
-  startYear: [1980, 1980, 1980, 1980, 1980, 1980]
-  endYear:   [2018, 2018, 2018, 2018, 2018, 2018]
-  samIndex:  ["noaa", "noaa", "noaa", "noaa", "noaa", "noaa"]
-  months:    ["DJ", "DJ", "DJ", "DJ", "DJ", "DJ"]
-  racmoVar:  ["snowmelt", "t2m", "albd", "lwsd", "precip", "senf"]
-  plotType:  ["reg", "reg", "reg", "reg", "reg", "reg"] 
-  figName:   "03"
+    startYear: [1980, 1980, 1980, 1980, 1980, 1980]
+    endYear:   [2018, 2018, 2018, 2018, 2018, 2018]
+    samIndex:  ["noaa", "noaa", "noaa", "noaa", "noaa", "noaa"]
+    months:    ["DJ", "DJ", "DJ", "DJ", "DJ", "DJ"]
+    racmoVar:  ["snowmelt", "t2m", "albd", "lwsd", "precip", "senf"]
+    plotType:  ["reg", "reg", "reg", "reg", "reg", "reg"] 
+    figName:   "03"
 ---
 
 # Data Prep & Set-Up ===========================================================
@@ -247,17 +247,17 @@ for (ii in 1:6) {
                                   "lwsd"     = "less\nincoming",
                                   "precip"   = "\nless",
                                   "senf"     = "less\nincoming",
-                                  "latf"     = "greater\nlosses",
+                                  "latf"     = "increased\nlosses",
                                   "turb"     = "\nreduced",
                                   "swsd"     = "less\nincoming",
-                                  "gbot"     = "greater\nlosses",
+                                  "gbot"     = "increased\nlosses",
                                   "seb"      = "\nreduced",
                                   "w10m"     = "\nslower",
                                   "u10m"     = "faster\neasterlies",  # slower westerlies
                                   "v10m"     = "slower\nsoutherlies", # faster northerlies
                                   "lwsn"     = "\nreduced",
                                   "swsn"     = "\nreduced",
-                                  "lwsu"     = "greater\nlosses",
+                                  "lwsu"     = "increased\nlosses",
                                   "mslp"     = "",
                                   "z700"     = "")
     
@@ -267,18 +267,18 @@ for (ii in 1:6) {
                                     "albd"     = ,
                                     "albedo"   = "\nbrighter",
                                     "lwsd"     = "more\nincoming",
-                                    "precip"   = "\ngreater",
+                                    "precip"   = "\nmore",
                                     "senf"     = "more\nincoming",
                                     "latf"     = "reduced\nlosses",
-                                    "turb"     = "\ngreater",
-                                    "swsd"     = "extra\nincoming",
+                                    "turb"     = "\nincreased",
+                                    "swsd"     = "more\nincoming",
                                     "gbot"     = "reduced\nlosses",
-                                    "seb"      = "\ngreater",
+                                    "seb"      = "\nincreased",
                                     "w10m"     = "\nfaster",
                                     "u10m"     = "slower\neasterlies",  # faster westerlies
                                     "v10m"     = "faster\nsoutherlies", # slower northerlies 
-                                    "swsn"     = "\ngreater",
-                                    "lwsn"     = "\ngreater",
+                                    "swsn"     = "\nincreased",
+                                    "lwsn"     = "\nincreased",
                                     "lwsu"     = "reduced\nlosses",
                                     "mslp"     = "higher\npressure",
                                     "z700"     = "higher\npressure")
@@ -331,7 +331,7 @@ plot_panels <- function() {
     terra::plot(iiData,
                 col = iiKula, range = iiRange,
                 mar = c(0, 0.05, 0, 0.05),
-                xlim = c(-26, 26), ylim = c(-23, 21),
+                xlim = c(-26.125, 26.125), ylim = c(-23.125, 21.125),
                 legend = FALSE, axes = FALSE)        # we'll add our own
     
     # Decorate the map ---------------------------------------------------------
@@ -368,6 +368,10 @@ plot_panels <- function() {
                        "albd_reg" = , 
                        "w10m_reg" = , "v10m_reg" = , "u10m_reg" = 0.85,
                        1)
+    labelKula <- switch(iiX,
+                        "mslp_reg" = "#FFFFFF",
+                        "#4D4D4DFF")
+    
     # others "should" be okay with the defaults from add_kulaBar
     
     # Add the colour bar
@@ -378,7 +382,7 @@ plot_panels <- function() {
                        labels = zLabels,
                        labelOffset = 0.65, 
                        labelEvery = 2,
-                       labelFirst = labelFirst,
+                       labelFirst = labelFirst, labelKula = labelKula,
                        labelCex = labelCex,
                        nameCex = 0.95,
                        nameOffset = nameOffset,
@@ -394,7 +398,13 @@ plot_panels <- function() {
     }
       
     # Add title
-    kulaR::annotate_kulaBar(above = bquote(.(iiName)), cex = 1.2, 
+    if (iiVar == "v10m") {
+      nameCex <- 1
+    } else {
+      nameCex <- 1.2
+    }
+    
+    kulaR::annotate_kulaBar(above = bquote(.(iiName)), cex = nameCex, 
                             offset_v = 0.62, col = nameKula) 
     
     # Add text left & right
@@ -412,7 +422,7 @@ if (!exists("vv")) vv <- 0
 vv <- vv + 1
 
 filePath <- paste0(figPath, "fig", params$figName, 
-                   "v", sprintf("%02d", vv), "_regressionMaps.pdf")
+                   "_v", sprintf("%02d", vv), "_regressionMaps.pdf")
 pdf(filePath, width = 10.5, height = 14)
 
 # Layout

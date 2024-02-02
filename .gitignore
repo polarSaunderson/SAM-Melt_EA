@@ -2,6 +2,7 @@
 .Rhistory
 .Rproj.user
 .Ruserdata
+.RData
 
 # R package related
 .quarto/
@@ -13,7 +14,6 @@
 
 # Directories
 /Figures/
-/non-git/
 
 # Other
 .DS_Store

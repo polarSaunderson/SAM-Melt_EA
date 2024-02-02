@@ -3,10 +3,11 @@ title: dt04_regress_onto_SAM.qmd
 abstract: |
   The purpose of this notebook is to regress RACMO variables onto the SAM index.
   It is also possible to regress ERA5 variables onto the SAM index as well.
-  The regressions are run in this notebook (>2-5 minutes) and saved as NetCDFs.
-  They can then be plotted in an03.
   
-  The NetCDF output has three layers:
+  The regressions are run in this notebook (each takes >2-5 minutes) and saved 
+  as NetCDFs; they can then be plotted using the an03 notebook.
+  
+  Each NetCDF output has three layers:
     - regression :      the amount of change in a variable for a unit decrease
                         in the SAM index;
     - pValues    :      the statistical significance of the regression;
@@ -22,25 +23,28 @@ abstract: |
     - w10m, u10m, v10m;
     - smb, precip, sndiv, subl.
     
-  !! The following variables can only be used if they've been derived in dt01:
+  The following variables can only be used if they were already created in dt01:
     - turb, radi, w10m, seb, albd, swsn, lwsn
   
-  The following ERA5 variables can also be used; these are slow! (> 25 min)
+  The following ERA5 variables can also be used (if downloaded from CDS); these 
+  are very slow! (> 25 min)
     - MSLP, z700
     
-  !! It is possible to choose which SAM index to use: either the NOAA CPC index 
-     (set as "noaa"), or the Marshall 2003 index (set as "marshall"). Check (or
-     redefine) the file paths that are expected in "R/align_sam_to_summers.R".
+  It is possible to choose which SAM index to use: either the NOAA CPC index 
+  (set as "noaa"), or the Marshall (2003) index (set as "marshall"). Check (or 
+  redefine) the file paths that are expected, in "R/align_sam_to_summers.R".
   
-  It is possible to run the regressions for a single month (e.g. the regression 
-  of the Dec variable onto the Dec SAM), or using a multi-month average (e.g. 
-  the mean (e.g. t2m) or total (e.g. snowmelt) Dec-Jan variable onto the mean 
-  Dec-Jan SAM).
+  It is possible to run the regressions for:
+    - a single month 
+        - e.g. regress the Dec precipitation onto the Dec SAM
+    - a multi-month value: 
+        - e.g. regress the mean DJ t2m onto the mean DJ SAM
+        - e.g. regress the total DJ snowmelt onto the mean DJ SAM
   
-  !! There is a conversion from Joules to Watts which assumes that all of the 
-     included months have 31 days. The code for this part in the "Convert units" 
-     chunk (line 120). Any changes to account for non-31 day months will need to
-     be hard-coded in.
+  There is a conversion from Joules to Watts which assumes that all of the 
+  included months have 31 days. The code for this part in the "Convert units" 
+  chunk (line 124). Any changes to account for non-31 day months will need to be 
+  hard-coded in.
   
 params:
   regressVar: "snowmelt"
@@ -94,9 +98,9 @@ if (params$regressVar %in% pToken$varERA5) {
 
 ### Prep data
 Run the remaining chunks regardless of using RACMO or ERA5 data. For some 
-variables it makes sense to think of the mean value (i.e. the average of the Dec
-and Jan t2m), whereas others make more sense as totals (i.e. the sum of the Dec
-and Jan snowmelt).
+variables it makes sense to think of multi-month data as the mean value (e.g. 
+the average of the Dec and Jan t2m), whereas others make more sense as totals 
+(e.g. the sum of the Dec and Jan snowmelt).
 ```{r}
 # Calculate a mean if necessary
 if (params$regressVar %in% pToken$varMeanable) {
@@ -145,16 +149,17 @@ if (params$regressVar %in% pToken$varPressure) {
 ```
 
 # Perform Regression ===========================================================
+This can be a little bit slow; expect it to take at least 2-5 minutes.
 ```{r}
 # Verify the number of summers is the same in the variable and the SAM data
 if (length(samMean) != terra::nlyr(varAustral)) stop("Something went wrong!")
 
 # Regression
 start <- domR::start_timer(params$regressVar, "regression")
-regression <- terra::app(x = varAustral,   # Calc the change in this variable
-                         xx = -samMean,    #    per unit *decrease* in the SAM
+regression <- terra::app(x = varAustral,   # Calc. the change in this variable
+                         xx = -samMean,    #    per unit *decrease* in the SAM;
                          detrend = TRUE,   # Linearly detrend both time series
-                         fun = apply_lm)   # Local function in the R/ directory
+                         fun = apply_lm)   # Use local function in R/ directory
 end <- domR::end_timer(start, params$regressVar, "regression")
 domR::cat_list(params)
 
@@ -168,7 +173,7 @@ names(regression) <- paste(params$regressVar,
 
 # Save =========================================================================
 !! Reproject any ERA5 data (EPSG:4326) to RACMO projection?
-Makes it easier to plot in a loop in an03.
+Makes it quicker/easier to plot in a for-loop in the an03 notebook.
 Ignore the warning, GDAL just has issues with the RACMO projection.
 ```{r}
 if (params$regressVar %in% pToken$varERA5) {
@@ -202,11 +207,11 @@ blurb <- paste("Regression of", params$regressVar, "onto the", params$samIndex,
                "monthly resolution. For temperatures, albedo, wind, and",
                "pressures, the regression is based on the mean of the monthly",
                "values each summer (e.g. average of the Dec and Jan t2m); for",
-               "the other variables (i.e. masses, fluxes), the regression is ",
+               "the other variables (i.e. masses & fluxes), the regression is ",
                "based on the sum of the monthly values each summer (e.g. total",
-               "of the Dec and Jan snowmelt). The SAM data is the mean of the",
-               "monthly values each summer (e.g. average of the Dec and Jan",
-               "SAM value).")
+               "of the Dec and Jan snowmelt). The SAM values are the mean of",
+               "the monthly values each summer (e.g. average of the Dec and",
+               "Jan SAM value).")
 ```
 
 ## Save as a NetCDF
@@ -235,8 +240,6 @@ domR::print_on_saving(fileName)
 # Check output
 ```{r}
 tt <- terra::rast(fileName)
-terra::plot(tt)
-nc <- RNetCDF::open.nc(fileName)
-RNetCDF::print.nc(nc)
-RNetCDF::close.nc(nc)
+tt
+terra::plot(tt$regression, range = c(0.5, 5.5), col = kulaS(10))
 ```
